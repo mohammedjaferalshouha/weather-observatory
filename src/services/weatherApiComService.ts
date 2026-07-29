@@ -31,7 +31,7 @@ export interface WeatherApiComData {
 export async function fetchWeatherApiComData(coords: Coordinates): Promise<WeatherApiComData | null> {
   const { lat, lon } = coords;
 
-  const url = new URL(NETLIFY_FUNCTION_URL);
+  const url = new URL(NETLIFY_FUNCTION_URL, window.location.origin);
   url.searchParams.set('lat', lat.toString());
   url.searchParams.set('lon', lon.toString());
 

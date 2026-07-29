@@ -49,7 +49,7 @@ function getWeatherCodeFromIcon(icon: string): number {
 export async function fetchVisualCrossingData(coords: Coordinates): Promise<VisualCrossingData | null> {
   const { lat, lon } = coords;
 
-  const url = new URL(NETLIFY_FUNCTION_URL);
+  const url = new URL(NETLIFY_FUNCTION_URL, window.location.origin);
   url.searchParams.set('lat', lat.toString());
   url.searchParams.set('lon', lon.toString());
 

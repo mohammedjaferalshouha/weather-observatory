@@ -6,7 +6,7 @@
 
 واجهة طقس عربية وإنجليزية تجمع التوقعات والساعات والخرائط ومقارنة النماذج العالمية في تجربة واحدة متجاوبة.
 
-[التجربة المباشرة](DEPLOYMENT_URL) · [English documentation](docs/README.en.md) · [فيديو العرض](docs/video/weather-observatory-demo.mp4)
+[التجربة المباشرة](https://global-weather-observatory.netlify.app) · [English documentation](docs/README.en.md) · [فيديو العرض](docs/video/weather-observatory-demo.mp4)
 
 </div>
 

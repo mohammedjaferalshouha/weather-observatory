@@ -6,7 +6,7 @@
 
 A bilingual, mobile-first weather experience that combines forecasts, model comparison, and interactive global maps.
 
-[Live application](DEPLOYMENT_URL) · [Arabic documentation](../README.md) · [Demo video](video/weather-observatory-demo.mp4)
+[Live application](https://global-weather-observatory.netlify.app) · [Arabic documentation](../README.md) · [Demo video](video/weather-observatory-demo.mp4)
 
 </div>
 
