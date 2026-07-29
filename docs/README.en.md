@@ -114,6 +114,12 @@ The serverless functions keep provider keys out of the browser and production bu
 - Favorites, search history, and preferences stay in the user's browser.
 - Geolocation is requested only after the user explicitly selects the live-location action.
 
+## License
+
+The project source code is available under the [MIT License](../LICENSE). You may use, modify, and distribute it while retaining the copyright and license notice.
+
+Weather data, maps, trademarks, and external services remain subject to their providers' terms and licenses as documented in the [data sources guide](DATA_SOURCES.md).
+
 ## Developer
 
 Designed and developed by Mohammed Jafer Al-Shouha
