@@ -955,6 +955,192 @@ main {
   cursor: pointer;
 }
 
+.hero-source-strip {
+  margin-top: 18px;
+  padding: 11px 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(101, 221, 255, .15);
+  border-radius: 14px;
+  background: rgba(5, 25, 42, .34);
+}
+
+.hero-source-strip > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.hero-source-strip > div + div {
+  padding-inline-start: 11px;
+  border-inline-start: 1px solid rgba(255, 255, 255, .1);
+}
+
+.hero-source-strip small {
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.hero-source-strip strong {
+  font-size: .76rem;
+}
+
+.hero-source-strip .participant-flags,
+.outlook-source .participant-flags {
+  display: inline-flex;
+  align-items: center;
+}
+
+.hero-source-strip .country-flag-image,
+.outlook-source .country-flag-image {
+  width: 21px;
+  height: 14px;
+  margin-inline-start: -4px;
+}
+
+.forecast-outlook {
+  margin-top: 18px;
+  padding: clamp(20px, 3vw, 30px);
+  border-radius: var(--radius-xl);
+}
+
+.forecast-outlook > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.forecast-outlook > header > div:first-child {
+  display: grid;
+  gap: 6px;
+}
+
+.forecast-outlook > header span {
+  color: var(--accent);
+  font-size: .75rem;
+  font-weight: 700;
+}
+
+.forecast-outlook h2 {
+  margin: 0;
+  font-size: clamp(1.15rem, 2vw, 1.55rem);
+  line-height: 1.5;
+}
+
+.outlook-range {
+  padding: 5px;
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 13px;
+  background: rgba(4, 21, 35, .42);
+}
+
+.outlook-range button {
+  min-height: 36px;
+  padding: 6px 11px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.outlook-range button.active {
+  border-color: rgba(101, 221, 255, .32);
+  color: #eaffff;
+  background: rgba(101, 221, 255, .16);
+}
+
+.outlook-body {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(210px, .34fr);
+  gap: 22px;
+}
+
+.outlook-body ul {
+  margin: 0;
+  padding-inline-start: 21px;
+  display: grid;
+  gap: 10px;
+  color: rgba(255, 255, 255, .84);
+  line-height: 1.7;
+}
+
+.outlook-body li::marker {
+  color: var(--accent);
+}
+
+.outlook-body aside {
+  display: grid;
+  gap: 9px;
+}
+
+.outlook-confidence,
+.outlook-source {
+  min-width: 0;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 13px;
+  background: rgba(4, 21, 35, .4);
+}
+
+.outlook-confidence {
+  justify-content: space-between;
+}
+
+.outlook-confidence small,
+.outlook-source small {
+  color: var(--muted);
+  font-size: .67rem;
+}
+
+.outlook-confidence strong,
+.outlook-source strong {
+  font-size: .78rem;
+}
+
+.outlook-confidence.high strong {
+  color: #79f2c4;
+}
+
+.outlook-confidence.medium strong,
+.outlook-confidence.single strong {
+  color: #a9e8ff;
+}
+
+.outlook-confidence.low strong {
+  color: #ffd28c;
+}
+
+.outlook-alert {
+  width: fit-content;
+  margin-top: 16px;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 205, 107, .2);
+  border-radius: 10px;
+  color: #ffe3a9;
+  background: rgba(129, 78, 11, .34);
+  font-size: .76rem;
+}
+
+.outlook-note {
+  margin: 18px 0 0;
+  padding-top: 13px;
+  border-top: 1px solid rgba(255, 255, 255, .08);
+  color: var(--muted);
+  font-size: .7rem;
+  line-height: 1.7;
+}
+
 .quick-metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2725,6 +2911,28 @@ footer > p {
     min-height: 155px;
   }
 
+  .forecast-outlook > header {
+    display: grid;
+  }
+
+  .outlook-range {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .outlook-range button {
+    min-width: 0;
+  }
+
+  .outlook-body {
+    grid-template-columns: 1fr;
+  }
+
+  .outlook-body aside {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .content-section {
     margin-bottom: 62px;
     content-visibility: visible;
@@ -3126,6 +3334,43 @@ footer > p {
 
   .hero-buttons {
     justify-content: center;
+  }
+
+  .hero-source-strip {
+    display: grid;
+  }
+
+  .hero-source-strip > div {
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .hero-source-strip > div + div {
+    padding: 9px 0 0;
+    border-inline-start: 0;
+    border-top: 1px solid rgba(255, 255, 255, .1);
+  }
+
+  .forecast-outlook {
+    padding: 18px 15px;
+  }
+
+  .forecast-outlook h2 {
+    text-align: start;
+  }
+
+  .outlook-range button {
+    padding-inline: 5px;
+    font-size: .72rem;
+  }
+
+  .outlook-body aside {
+    grid-template-columns: 1fr;
+  }
+
+  .outlook-body ul {
+    padding-inline-start: 19px;
+    font-size: .88rem;
   }
 
   .quick-metrics {

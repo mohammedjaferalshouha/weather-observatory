@@ -36,6 +36,7 @@ import { getWeatherDescription, getWeatherTheme, translations, weatherModels } f
 import { fetchVisualCrossingData } from './services/visualCrossingService';
 import { fetchWeatherApiComData } from './services/weatherApiComService';
 import { fetchWeatherData, reverseGeocode } from './services/weatherService';
+import { buildForecastOutlook, resolveForecastDay } from './utils/forecastOutlook';
 import {
   CombinedWeatherData,
   ComparisonRange,
@@ -184,6 +185,7 @@ function App() {
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [locating, setLocating] = useState(false);
   const [forecastSource, setForecastSource] = useState<ForecastSource>('blend');
+  const [outlookDays, setOutlookDays] = useState<1 | 3 | 7>(7);
   const [comparisonModels, setComparisonModels] = useState<WeatherModelKey[]>(() =>
     readStorage('weather:comparison-models', weatherModels.map((model) => model.key))
   );
@@ -380,6 +382,22 @@ function App() {
     const index = primary.allHourly.findIndex((hour) => hour.time === primary.current.time);
     return primary.allHourly[Math.max(0, index)];
   }, [primary]);
+  const today = primary?.daily[0];
+  const resolvedForecastDays = useMemo(
+    () => primary?.daily.map((day) =>
+      resolveForecastDay(
+        day,
+        primary.allHourly,
+        hourlySourceKeys,
+        weatherModels.map((model) => model.key)
+      )
+    ) ?? [],
+    [hourlySourceKeys, primary]
+  );
+  const todayForecast = resolvedForecastDays[0];
+  const todayForecastModels = weatherModels.filter((model) =>
+    todayForecast?.participantKeys.includes(model.key)
+  );
 
   const tempUnitLabel = settings.temperature === 'c' ? '°م' : '°ف';
   const windUnitLabel = settings.wind === 'kmh'
@@ -409,38 +427,53 @@ function App() {
     : '';
 
   const summary = useMemo(() => {
-    if (!current || !primary) return '';
-    const today = primary.daily[0];
+    if (!current || !todayForecast) return '';
     const description = getWeatherDescription(current.weathercode, language);
     if (language === 'ar') {
-      if (today.precipitation_probability_max >= 60) {
-        return `${description} الآن، مع احتمال أمطار يصل إلى ${Math.round(today.precipitation_probability_max)}٪ خلال اليوم.`;
+      if (todayForecast.precipitationProbability >= 60) {
+        return `${description} في الرصد الحالي، ومع المصدر المختار يصل احتمال المطر اليوم إلى ${Math.round(todayForecast.precipitationProbability)}٪.`;
       }
       if (current.windgusts_10m >= 45) {
-        return `${description} مع هبات رياح نشطة قد تصل إلى ${Math.round(current.windgusts_10m)} كم/س.`;
+        return `${description} في الرصد الحالي، مع هبات نشطة تبلغ ${formatWind(current.windgusts_10m)}، والعظمى المتوقعة ${formatTemp(todayForecast.maximum)}.`;
       }
-      return `${description} الآن، والعظمى المتوقعة اليوم ${formatTemp(today.temperature_2m_max)}.`;
+      return `${description} في الرصد الحالي، والعظمى المتوقعة اليوم من المصدر المختار ${formatTemp(todayForecast.maximum)}.`;
     }
-    if (today.precipitation_probability_max >= 60) {
-      return `${description} now, with rain chances up to ${Math.round(today.precipitation_probability_max)}% today.`;
+    if (todayForecast.precipitationProbability >= 60) {
+      return `${description} in the current observation, with today's selected-source rain chance reaching ${Math.round(todayForecast.precipitationProbability)}%.`;
     }
-    return `${description} now, with a forecast high of ${formatTemp(today.temperature_2m_max)}.`;
-  }, [current, primary, language, settings.temperature]);
+    return `${description} in the current observation, with a selected-source high of ${formatTemp(todayForecast.maximum)}.`;
+  }, [current, todayForecast, language, settings.temperature, settings.wind]);
 
-  const alert = useMemo(() => {
-    if (!current || !primary) return null;
-    const today = primary.daily[0];
-    if ([95, 96, 99].includes(current.weathercode)) {
-      return language === 'ar' ? 'تنبيه استرشادي: عواصف رعدية في المنطقة' : 'Advisory: Thunderstorms in the area';
-    }
-    if (today.windgusts_10m_max >= 60) {
-      return language === 'ar' ? 'تنبيه استرشادي: هبات رياح قوية متوقعة اليوم' : 'Advisory: Strong wind gusts expected';
-    }
-    if (today.precipitation_probability_max >= 80 && today.precipitation_sum >= 15) {
-      return language === 'ar' ? 'تنبيه استرشادي: أمطار غزيرة محتملة اليوم' : 'Advisory: Heavy rainfall is possible';
-    }
-    return null;
-  }, [current, primary, language]);
+  const forecastOutlook = useMemo(
+    () => buildForecastOutlook({
+      days: resolvedForecastDays.slice(0, outlookDays),
+      language,
+      formatTemperature: (value) => formatTemp(value),
+      formatWind
+    }),
+    [
+      language,
+      outlookDays,
+      resolvedForecastDays,
+      settings.temperature,
+      settings.wind
+    ]
+  );
+  const todayOutlook = useMemo(
+    () => buildForecastOutlook({
+      days: resolvedForecastDays.slice(0, 1),
+      language,
+      formatTemperature: (value) => formatTemp(value),
+      formatWind
+    }),
+    [
+      language,
+      resolvedForecastDays,
+      settings.temperature,
+      settings.wind
+    ]
+  );
+  const alert = todayOutlook.alert;
 
   const isFavorite = favorites.some(
     (item) => Math.abs(item.lat - location.lat) < 0.001 && Math.abs(item.lon - location.lon) < 0.001
@@ -549,7 +582,6 @@ function App() {
     setInstallPrompt(null);
   };
 
-  const today = primary?.daily[0];
   const displayedDays = primary?.daily.slice(0, showAllDays ? 16 : 10) ?? [];
   const activeForecastModel = weatherModels.find((model) => model.key === forecastSource) ?? null;
 
@@ -621,7 +653,7 @@ function App() {
           </section>
         )}
 
-        {!loading && current && primary && today && (
+        {!loading && current && primary && today && todayForecast && (
           <>
             {cached && <div className="cached-banner">{t.useCached}</div>}
 
@@ -658,13 +690,39 @@ function App() {
                   </div>
 
                   <div className="high-low">
-                    <span>{t.high} <strong>{formatTemp(today.temperature_2m_max)}</strong></span>
-                    <span>{t.low} <strong>{formatTemp(today.temperature_2m_min)}</strong></span>
+                    <span>{t.high} <strong>{formatTemp(todayForecast.maximum)}</strong></span>
+                    <span>{t.low} <strong>{formatTemp(todayForecast.minimum)}</strong></span>
                     <span>{t.feels} <strong>{formatTemp(current.apparent_temperature)}</strong></span>
                   </div>
 
                   <p className="weather-summary">{summary}</p>
                   {alert ? <div className="weather-alert">{alert}</div> : <div className="calm-status">{t.noAlerts}</div>}
+
+                  <div className="hero-source-strip">
+                    <div>
+                      <small>{t.observationSource}</small>
+                      <strong>Open-Meteo</strong>
+                    </div>
+                    <div>
+                      <small>{t.todayForecastSource}</small>
+                      <strong>
+                        {activeForecastModel
+                          ? activeForecastModel.label
+                          : forecastSource === 'custom'
+                            ? t.customBlend
+                            : t.blend}
+                      </strong>
+                      <span className="participant-flags">
+                        {todayForecastModels.map((model) => (
+                          <CountryFlag
+                            key={`hero-source-${model.key}`}
+                            countryCode={model.countryCode}
+                            label={language === 'ar' ? model.nameAr : model.nameEn}
+                          />
+                        ))}
+                      </span>
+                    </div>
+                  </div>
 
                   <div className="hero-buttons">
                     <button type="button" onClick={shareWeather}><FiShare2 /> {t.share}</button>
@@ -675,8 +733,8 @@ function App() {
                 <div className="quick-metrics">
                   <article className="metric-card glass-card">
                     <span><FiDroplet /></span>
-                    <div><small>{t.rain}</small><strong>{Math.round(today.precipitation_probability_max)}٪</strong></div>
-                    <em>{today.precipitation_sum.toFixed(1)} ملم</em>
+                    <div><small>{t.rain}</small><strong>{Math.round(todayForecast.precipitationProbability)}٪</strong></div>
+                    <em>{todayForecast.precipitation.toFixed(1)} {language === 'ar' ? 'ملم' : 'mm'}</em>
                   </article>
                   <article className="metric-card glass-card">
                     <span><FiWind /></span>
@@ -695,6 +753,72 @@ function App() {
                   </article>
                 </div>
               </div>
+
+              <article className="forecast-outlook glass-card" aria-live="polite">
+                <header>
+                  <div>
+                    <span>{t.smartOutlook}</span>
+                    <h2>{forecastOutlook.headline}</h2>
+                  </div>
+                  <div className="outlook-range" aria-label={t.smartOutlook}>
+                    {([
+                      { value: 1 as const, label: t.oneDay },
+                      { value: 3 as const, label: t.threeDays },
+                      { value: 7 as const, label: t.sevenDays }
+                    ]).map((option) => (
+                      <button
+                        type="button"
+                        key={`outlook-${option.value}`}
+                        className={outlookDays === option.value ? 'active' : ''}
+                        onClick={() => setOutlookDays(option.value)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </header>
+
+                <div className="outlook-body">
+                  <ul>
+                    {forecastOutlook.points.map((point) => <li key={point}>{point}</li>)}
+                  </ul>
+                  <aside>
+                    <div className={`outlook-confidence ${forecastOutlook.confidence}`}>
+                      <small>{t.confidence}</small>
+                      <strong>
+                        {forecastOutlook.confidence === 'single'
+                          ? t.confidenceSingle
+                          : forecastOutlook.confidence === 'high'
+                            ? t.confidenceHigh
+                            : forecastOutlook.confidence === 'medium'
+                              ? t.confidenceMedium
+                              : t.confidenceLow}
+                      </strong>
+                    </div>
+                    <div className="outlook-source">
+                      <small>{t.forecastSource}</small>
+                      <strong>
+                        {activeForecastModel
+                          ? activeForecastModel.label
+                          : forecastSource === 'custom'
+                            ? t.customBlend
+                            : t.blend}
+                      </strong>
+                      <span className="participant-flags">
+                        {todayForecastModels.map((model) => (
+                          <CountryFlag
+                            key={`outlook-source-${model.key}`}
+                            countryCode={model.countryCode}
+                            label={language === 'ar' ? model.nameAr : model.nameEn}
+                          />
+                        ))}
+                      </span>
+                    </div>
+                  </aside>
+                </div>
+                {forecastOutlook.alert && <div className="outlook-alert">{forecastOutlook.alert}</div>}
+                <p className="outlook-note">{t.outlookDescription}</p>
+              </article>
             </section>
 
             <section className="content-section" id="hourly">
@@ -777,28 +901,15 @@ function App() {
 
               <div className="daily-grid">
                 {displayedDays.map((day, index) => {
-                  const requestedKeys = activeForecastModel
-                    ? [activeForecastModel.key]
-                    : forecastSource === 'custom'
-                      ? customBlendModels
-                      : weatherModels.map((model) => model.key);
-                  let participantKeys = requestedKeys.filter(
-                    (key) => day.modelMaxTemps[key] !== null && day.modelMinTemps[key] !== null
-                  );
-                  if (!participantKeys.length && activeForecastModel) {
-                    participantKeys = weatherModels
-                      .map((model) => model.key)
-                      .filter((key) => day.modelMaxTemps[key] !== null && day.modelMinTemps[key] !== null);
-                  }
+                  const resolvedDay = resolvedForecastDays[index];
+                  const participantKeys = resolvedDay?.participantKeys ?? [];
                   const participantModels = participantKeys
                     .map((key) => weatherModels.find((model) => model.key === key))
                     .filter((model): model is (typeof weatherModels)[number] => Boolean(model));
-                  const maximum = averageValues(participantKeys.map((key) => day.modelMaxTemps[key])) ?? day.temperature_2m_max;
-                  const minimum = averageValues(participantKeys.map((key) => day.modelMinTemps[key])) ?? day.temperature_2m_min;
-                  const rain = averageValues(participantKeys.map((key) => day.modelPrecipitation[key]));
-                  const weatherCode = Math.round(
-                    averageValues(participantKeys.map((key) => day.modelWeatherCodes[key])) ?? day.weathercode
-                  );
+                  const maximum = resolvedDay?.maximum ?? day.temperature_2m_max;
+                  const minimum = resolvedDay?.minimum ?? day.temperature_2m_min;
+                  const rain = resolvedDay?.precipitation ?? day.precipitation_sum;
+                  const weatherCode = resolvedDay?.weatherCode ?? day.weathercode;
                   const isSingleSource = participantModels.length === 1;
                   return (
                     <button
@@ -844,9 +955,7 @@ function App() {
                       </div>
                       <div className="day-rain">
                         <FiDroplet />
-                        {rain !== null
-                          ? `${rain.toFixed(1)} ${language === 'ar' ? 'ملم' : 'mm'}`
-                          : `${Math.round(day.precipitation_probability_max)}٪`}
+                        {`${rain.toFixed(1)} ${language === 'ar' ? 'ملم' : 'mm'}`}
                       </div>
                     </button>
                   );
@@ -928,7 +1037,7 @@ function App() {
                   { icon: <FiSun />, label: t.uv, value: today.uv_index_max.toFixed(1) },
                   { icon: <FiSunrise />, label: t.sunrise, value: formatTime(today.sunrise) },
                   { icon: <FiSunset />, label: t.sunset, value: formatTime(today.sunset) },
-                  { icon: <WiRaindrop />, label: t.precipitation, value: `${today.precipitation_sum.toFixed(1)} ${language === 'ar' ? 'ملم' : 'mm'}` }
+                  { icon: <WiRaindrop />, label: t.precipitation, value: `${todayForecast.precipitation.toFixed(1)} ${language === 'ar' ? 'ملم' : 'mm'}` }
                 ].map((item) => (
                   <article className="detail-card glass-card" key={item.label}>
                     <span>{item.icon}</span>

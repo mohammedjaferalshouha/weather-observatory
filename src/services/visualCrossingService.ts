@@ -47,6 +47,9 @@ function getWeatherCodeFromIcon(icon: string): number {
 }
 
 export async function fetchVisualCrossingData(coords: Coordinates): Promise<VisualCrossingData | null> {
+  if (import.meta.env.DEV && !import.meta.env.VITE_WEATHER_FUNCTIONS_BASE) {
+    return null;
+  }
   const { lat, lon } = coords;
 
   const url = new URL(NETLIFY_FUNCTION_URL, window.location.origin);

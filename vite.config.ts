@@ -6,7 +6,10 @@ export default defineConfig({
   base: './',
   server: {
     port: 3000,
-    strictPort: true
+    strictPort: true,
+    watch: {
+      ignored: ['**/.netlify/**']
+    }
   },
   build: {
     sourcemap: false,
