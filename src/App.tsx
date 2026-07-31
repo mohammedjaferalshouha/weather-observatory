@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   FiChevronDown,
   FiClipboard,
@@ -69,6 +70,9 @@ const DEFAULT_SETTINGS: UserSettings = {
   reducedMotion: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 };
 
+const isCompactViewport = () => window.matchMedia('(max-width: 780px)').matches;
+const collapsedDayCount = () => isCompactViewport() ? 3 : 5;
+
 const cleanStoredLocation = (value: Coordinates): Coordinates => ({
   ...value,
   name: value.name?.split(/[،,]/)[0].trim()
@@ -80,6 +84,24 @@ const readStorage = <T,>(key: string, fallback: T): T => {
     return saved ? JSON.parse(saved) : fallback;
   } catch {
     return fallback;
+  }
+};
+
+const copyTextToClipboard = async (text: string) => {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    textarea.remove();
+    return copied;
   }
 };
 
@@ -176,7 +198,8 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cached, setCached] = useState(false);
-  const [showAllDays, setShowAllDays] = useState(false);
+  const [visibleDayCount, setVisibleDayCount] = useState(collapsedDayCount);
+  const [compactLayout, setCompactLayout] = useState(isCompactViewport);
   const [selectedDay, setSelectedDay] = useState<DailyForecast | null>(null);
   const [selectedHour, setSelectedHour] = useState<HourlyForecast | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -185,6 +208,9 @@ function App() {
   const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
   const [locating, setLocating] = useState(false);
   const [forecastSource, setForecastSource] = useState<ForecastSource>('blend');
+  const [quickSourceOpen, setQuickSourceOpen] = useState(false);
+  const [quickSourceAnchor, setQuickSourceAnchor] = useState<{ top: number; left: number; right: number } | null>(null);
+  const [dailySourceExpanded, setDailySourceExpanded] = useState(false);
   const [outlookDays, setOutlookDays] = useState<1 | 3 | 7>(7);
   const [comparisonModels, setComparisonModels] = useState<WeatherModelKey[]>(() =>
     readStorage('weather:comparison-models', weatherModels.map((model) => model.key))
@@ -201,6 +227,7 @@ function App() {
   const t = translations[language];
   const locale = language === 'ar' ? 'ar-JO' : 'en-US';
   const languageRef = useRef(language);
+  const quickSourceButtonRef = useRef<HTMLButtonElement>(null);
   languageRef.current = language;
 
   const showToast = useCallback((message: string) => {
@@ -216,7 +243,7 @@ function App() {
     if (!preserveView) setLoading(true);
     setError(null);
     setCached(false);
-    if (!preserveView) setShowAllDays(false);
+    if (!preserveView) setVisibleDayCount(collapsedDayCount());
 
     try {
       let resolvedLocation = cleanStoredLocation(nextLocation);
@@ -318,6 +345,26 @@ function App() {
   }, [comparisonModels, comparisonRange, customBlendModels]);
 
   useEffect(() => {
+    const media = window.matchMedia('(max-width: 780px)');
+    const updateLayout = (event: MediaQueryListEvent | MediaQueryList) => {
+      const nextCompact = event.matches;
+      setCompactLayout(nextCompact);
+      setVisibleDayCount((current) => current <= 5 ? (nextCompact ? 3 : 5) : current);
+    };
+    media.addEventListener('change', updateLayout);
+    return () => media.removeEventListener('change', updateLayout);
+  }, []);
+
+  useEffect(() => {
+    if (!quickSourceOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setQuickSourceOpen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, [quickSourceOpen]);
+
+  useEffect(() => {
     if (!window.matchMedia('(hover: none) and (pointer: coarse)').matches) return;
     let timer = 0;
     const onScroll = () => {
@@ -377,6 +424,17 @@ function App() {
     [hourlySourceKeys, primary]
   );
   const hourlySourceModels = weatherModels.filter((model) => hourlySourceKeys.includes(model.key));
+  const activeForecastModel = weatherModels.find((model) => model.key === forecastSource) ?? null;
+  const selectedForecastKeys = forecastSource === 'blend'
+    ? weatherModels.map((model) => model.key)
+    : forecastSource === 'custom'
+      ? customBlendModels
+      : [forecastSource];
+  const forecastSourceLabel = activeForecastModel
+    ? activeForecastModel.label
+    : forecastSource === 'custom'
+      ? t.customBlend
+      : t.blend;
   const currentHour = useMemo(() => {
     if (!primary) return null;
     const index = primary.allHourly.findIndex((hour) => hour.time === primary.current.time);
@@ -475,6 +533,73 @@ function App() {
   );
   const alert = todayOutlook.alert;
 
+  const applyForecastSelection = (keys: WeatherModelKey[]) => {
+    const orderedKeys = weatherModels
+      .map((model) => model.key)
+      .filter((key) => keys.includes(key));
+    if (!orderedKeys.length) {
+      showToast(t.chooseAtLeastOne);
+      return;
+    }
+    if (orderedKeys.length === weatherModels.length) {
+      setForecastSource('blend');
+      return;
+    }
+    if (orderedKeys.length === 1) {
+      setForecastSource(orderedKeys[0]);
+      return;
+    }
+    setCustomBlendModels(orderedKeys);
+    setForecastSource('custom');
+  };
+
+  const toggleForecastModel = (key: WeatherModelKey) => {
+    const nextKeys = selectedForecastKeys.includes(key)
+      ? selectedForecastKeys.filter((selectedKey) => selectedKey !== key)
+      : [...selectedForecastKeys, key];
+    applyForecastSelection(nextKeys);
+  };
+
+  const toggleQuickSource = () => {
+    if (quickSourceOpen) {
+      setQuickSourceOpen(false);
+      return;
+    }
+    const bounds = quickSourceButtonRef.current?.getBoundingClientRect();
+    if (bounds) {
+      setQuickSourceAnchor({
+        top: bounds.bottom + 8,
+        left: bounds.left,
+        right: window.innerWidth - bounds.right
+      });
+    }
+    setQuickSourceOpen(true);
+  };
+
+  const outlookRangeLabel = outlookDays === 1
+    ? t.oneDay
+    : outlookDays === 3
+      ? t.threeDays
+      : t.sevenDays;
+  const shareUrl = import.meta.env.PROD
+    ? `${window.location.origin}${window.location.pathname}`
+    : 'https://global-weather-observatory.netlify.app/';
+  const shareSummaryText = current && primary && todayForecast
+    ? [
+        `${location.name ?? ''}${location.country ? `، ${location.country}` : ''}`,
+        `${getWeatherDescription(current.weathercode, language)} · ${formatTemp(current.temperature_2m)}`,
+        `${t.high}: ${formatTemp(todayForecast.maximum)} · ${t.low}: ${formatTemp(todayForecast.minimum)}`,
+        summary,
+        `${t.forecastSource}: ${forecastSourceLabel}`,
+        `${t.smartOutlook} — ${outlookRangeLabel}`,
+        forecastOutlook.headline,
+        ...forecastOutlook.points.map((point) => `• ${point}`),
+        forecastOutlook.alert ?? '',
+        `${t.updated}: ${formatTime(primary.fetchedAt)}`,
+        shareUrl
+      ].filter(Boolean).join('\n')
+    : summary;
+
   const isFavorite = favorites.some(
     (item) => Math.abs(item.lat - location.lat) < 0.001 && Math.abs(item.lon - location.lon) < 0.001
   );
@@ -517,8 +642,8 @@ function App() {
   };
 
   const copySummary = async () => {
-    await navigator.clipboard.writeText(`${location.name} — ${summary}`);
-    showToast(t.copied);
+    const copied = await copyTextToClipboard(shareSummaryText);
+    showToast(copied ? t.copied : t.copyFailed);
   };
 
   const shareWeather = async () => {
@@ -551,25 +676,29 @@ function App() {
     context.fillText(formatTemp(current.temperature_2m), x, 390);
     context.font = '500 34px Arial';
     context.fillStyle = 'rgba(255,255,255,.9)';
-    context.fillText(summary, x, 480, 930);
-    context.font = '400 25px Arial';
+    context.fillText(summary, x, 465, 930);
+    context.font = '600 27px Arial';
+    context.fillText(forecastOutlook.headline, x, 520, 930);
+    context.font = '400 23px Arial';
     context.fillStyle = 'rgba(255,255,255,.68)';
-    context.fillText(t.tagline, x, 560);
+    context.fillText(t.tagline, x, 580);
 
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
     if (!blob) return;
     const file = new File([blob], 'weather-card.png', { type: 'image/png' });
     try {
-      if (navigator.share && navigator.canShare?.({ files: [file] })) {
-        await navigator.share({ title: t.brand, text: summary, files: [file] });
+      const canNativeShare = Boolean(navigator.canShare?.({ files: [file] }));
+      if (canNativeShare) {
+        await navigator.share({ title: t.brand, text: shareSummaryText, files: [file] });
       } else {
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         link.download = 'weather-card.png';
         link.click();
         URL.revokeObjectURL(link.href);
+        await copyTextToClipboard(shareSummaryText);
       }
-      showToast(t.downloaded);
+      showToast(canNativeShare ? t.downloaded : t.sharePrepared);
     } catch {
       // The user cancelled the system share dialog.
     }
@@ -582,13 +711,96 @@ function App() {
     setInstallPrompt(null);
   };
 
-  const displayedDays = primary?.daily.slice(0, showAllDays ? 16 : 10) ?? [];
-  const activeForecastModel = weatherModels.find((model) => model.key === forecastSource) ?? null;
+  const displayedDays = primary?.daily.slice(0, visibleDayCount) ?? [];
+  const collapsedDays = compactLayout ? 3 : 5;
+  const quickSourcePortal = quickSourceOpen
+    ? createPortal(
+        <>
+          <div
+            className="quick-source-backdrop"
+            role="presentation"
+            onMouseDown={() => setQuickSourceOpen(false)}
+          />
+          <section
+            className="quick-source-panel"
+            id="quick-source-panel"
+            role="dialog"
+            aria-modal={compactLayout}
+            aria-label={t.changeForecastSource}
+            style={compactLayout || !quickSourceAnchor
+              ? undefined
+              : language === 'ar'
+                ? { top: quickSourceAnchor.top, left: quickSourceAnchor.left }
+                : { top: quickSourceAnchor.top, right: quickSourceAnchor.right }}
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <header>
+              <div>
+                <span>{t.forecastSource}</span>
+                <strong>{t.chooseForecastModels}</strong>
+              </div>
+              <button
+                type="button"
+                className="quick-source-close"
+                onClick={() => setQuickSourceOpen(false)}
+                aria-label={t.close}
+              >
+                <FiX />
+              </button>
+            </header>
+            <button
+              type="button"
+              className={forecastSource === 'blend' ? 'quick-all-models active' : 'quick-all-models'}
+              onClick={() => applyForecastSelection(weatherModels.map((model) => model.key))}
+            >
+              <FiGlobe />
+              <span><strong>{t.allModels}</strong><small>{t.blend}</small></span>
+              <span className="participant-flags">
+                {weatherModels.map((model) => (
+                  <CountryFlag
+                    key={`quick-all-${model.key}`}
+                    countryCode={model.countryCode}
+                    label={language === 'ar' ? model.nameAr : model.nameEn}
+                  />
+                ))}
+              </span>
+            </button>
+            <div className="quick-model-grid">
+              {weatherModels.map((model) => {
+                const checked = selectedForecastKeys.includes(model.key);
+                return (
+                  <label key={`quick-model-${model.key}`} className={checked ? 'checked' : ''}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleForecastModel(model.key)}
+                    />
+                    <CountryFlag
+                      countryCode={model.countryCode}
+                      label={language === 'ar' ? model.nameAr : model.nameEn}
+                    />
+                    <span>
+                      <strong>{model.label}</strong>
+                      <small>{language === 'ar' ? model.nameAr : model.nameEn}</small>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+            <p>{language === 'ar'
+              ? 'يتغير الطقس والملخص والساعات والأيام فورًا مع اختيارك'
+              : 'Weather, outlook, hours, and days update immediately with your selection'}</p>
+          </section>
+        </>,
+        document.body
+      )
+    : null;
 
   return (
     <div className={`app theme-${theme}`}>
       <WeatherScene theme={theme} reducedMotion={settings.reducedMotion} />
       <div className="app-overlay" />
+      {quickSourcePortal}
 
       <header className="topbar">
         <a className="brand" href="#overview" aria-label={t.brand}>
@@ -681,6 +893,31 @@ function App() {
 
               <div className="hero-grid">
                 <article className="current-card glass-card">
+                  <button
+                    ref={quickSourceButtonRef}
+                    type="button"
+                    className="hero-source-button"
+                    aria-expanded={quickSourceOpen}
+                    aria-controls="quick-source-panel"
+                    onClick={toggleQuickSource}
+                  >
+                    <FiLayers />
+                    <span>
+                      <small>{t.forecastSource}</small>
+                      <strong>{forecastSourceLabel}</strong>
+                    </span>
+                    <span className="participant-flags">
+                      {todayForecastModels.map((model) => (
+                        <CountryFlag
+                          key={`quick-button-${model.key}`}
+                          countryCode={model.countryCode}
+                          label={language === 'ar' ? model.nameAr : model.nameEn}
+                        />
+                      ))}
+                    </span>
+                    <FiChevronDown />
+                  </button>
+
                   <div className="current-main">
                     <WeatherIcon code={current.weathercode} isDay={current.is_day} />
                     <div>
@@ -865,38 +1102,63 @@ function App() {
             <section className="content-section" id="daily">
               <div className="section-heading">
                 <div><span>{language === 'ar' ? 'حتى ١٦ يومًا' : 'Up to 16 days'}</span><h2>{t.daily}</h2></div>
-                <button type="button" className="text-button" onClick={() => setShowAllDays((value) => !value)}>
-                  {showAllDays ? t.showLess : t.showAll} <FiChevronDown />
-                </button>
+                <small>{displayedDays.length} / {primary.daily.length} {t.displayedDays}</small>
               </div>
 
-              <div className="forecast-source-picker" aria-label={t.forecastSource}>
-                <span>{t.forecastSource}</span>
+              <div className={dailySourceExpanded ? 'daily-source-control expanded' : 'daily-source-control'}>
                 <button
                   type="button"
-                  className={forecastSource === 'blend' ? 'active' : ''}
-                  onClick={() => setForecastSource('blend')}
+                  className="forecast-source-summary"
+                  aria-expanded={dailySourceExpanded}
+                  onClick={() => setDailySourceExpanded((expanded) => !expanded)}
                 >
-                  <FiGlobe /> {t.blend}
+                  <span>
+                    <small>{t.forecastSource}</small>
+                    <strong>{forecastSourceLabel}</strong>
+                  </span>
+                  <span className="participant-flags">
+                    {todayForecastModels.map((model) => (
+                      <CountryFlag
+                        key={`daily-source-summary-${model.key}`}
+                        countryCode={model.countryCode}
+                        label={language === 'ar' ? model.nameAr : model.nameEn}
+                      />
+                    ))}
+                  </span>
+                  <em>{t.changeForecastSource}</em>
+                  <FiChevronDown />
                 </button>
-                {weatherModels.map((model) => (
+
+                {dailySourceExpanded && (
+                  <div className="forecast-source-picker" aria-label={t.forecastSource}>
+                    <span>{t.forecastSource}</span>
+                    <button
+                      type="button"
+                      className={forecastSource === 'blend' ? 'active' : ''}
+                      onClick={() => setForecastSource('blend')}
+                    >
+                      <FiGlobe /> {t.blend}
+                    </button>
+                    {weatherModels.map((model) => (
+                      <button
+                        type="button"
+                        key={`forecast-${model.key}`}
+                        className={forecastSource === model.key ? 'active' : ''}
+                        onClick={() => setForecastSource(model.key)}
+                      >
+                        <CountryFlag countryCode={model.countryCode} label={language === 'ar' ? model.nameAr : model.nameEn} />
+                        {model.label}
+                      </button>
+                    ))}
                   <button
                     type="button"
-                    key={`forecast-${model.key}`}
-                    className={forecastSource === model.key ? 'active' : ''}
-                    onClick={() => setForecastSource(model.key)}
+                    className={forecastSource === 'custom' ? 'active' : ''}
+                    onClick={() => setForecastSource('custom')}
                   >
-                    <CountryFlag countryCode={model.countryCode} label={language === 'ar' ? model.nameAr : model.nameEn} />
-                    {model.label}
+                    <FiLayers /> {t.customBlend}
                   </button>
-                ))}
-                <button
-                  type="button"
-                  className={forecastSource === 'custom' ? 'active' : ''}
-                  onClick={() => setForecastSource('custom')}
-                >
-                  <FiLayers /> {t.customBlend}
-                </button>
+                  </div>
+                )}
               </div>
 
               <div className="daily-grid">
@@ -960,6 +1222,38 @@ function App() {
                     </button>
                   );
                 })}
+              </div>
+
+              <div className="daily-actions">
+                {visibleDayCount < primary.daily.length && (
+                  <button
+                    type="button"
+                    className="daily-more primary"
+                    onClick={() => setVisibleDayCount((count) =>
+                      Math.min(primary.daily.length, count + (compactLayout ? 3 : 5))
+                    )}
+                  >
+                    {t.showMoreDays} <FiChevronDown />
+                  </button>
+                )}
+                {visibleDayCount < primary.daily.length && (
+                  <button
+                    type="button"
+                    className="daily-more"
+                    onClick={() => setVisibleDayCount(primary.daily.length)}
+                  >
+                    {t.showAllDays}
+                  </button>
+                )}
+                {visibleDayCount > collapsedDays && (
+                  <button
+                    type="button"
+                    className="daily-more"
+                    onClick={() => setVisibleDayCount(collapsedDays)}
+                  >
+                    {t.collapseDays}
+                  </button>
+                )}
               </div>
             </section>
 
