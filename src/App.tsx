@@ -209,7 +209,6 @@ function App() {
   const [locating, setLocating] = useState(false);
   const [forecastSource, setForecastSource] = useState<ForecastSource>('blend');
   const [quickSourceOpen, setQuickSourceOpen] = useState(false);
-  const [quickSourceAnchor, setQuickSourceAnchor] = useState<{ top: number; left: number; right: number } | null>(null);
   const [dailySourceExpanded, setDailySourceExpanded] = useState(false);
   const [outlookDays, setOutlookDays] = useState<1 | 3 | 7>(7);
   const [comparisonModels, setComparisonModels] = useState<WeatherModelKey[]>(() =>
@@ -357,11 +356,16 @@ function App() {
 
   useEffect(() => {
     if (!quickSourceOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setQuickSourceOpen(false);
     };
     window.addEventListener('keydown', closeOnEscape);
-    return () => window.removeEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('keydown', closeOnEscape);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [quickSourceOpen]);
 
   useEffect(() => {
@@ -565,14 +569,6 @@ function App() {
       setQuickSourceOpen(false);
       return;
     }
-    const bounds = quickSourceButtonRef.current?.getBoundingClientRect();
-    if (bounds) {
-      setQuickSourceAnchor({
-        top: bounds.bottom + 8,
-        left: bounds.left,
-        right: window.innerWidth - bounds.right
-      });
-    }
     setQuickSourceOpen(true);
   };
 
@@ -727,11 +723,6 @@ function App() {
             role="dialog"
             aria-modal={compactLayout}
             aria-label={t.changeForecastSource}
-            style={compactLayout || !quickSourceAnchor
-              ? undefined
-              : language === 'ar'
-                ? { top: quickSourceAnchor.top, left: quickSourceAnchor.left }
-                : { top: quickSourceAnchor.top, right: quickSourceAnchor.right }}
             onMouseDown={(event) => event.stopPropagation()}
           >
             <header>

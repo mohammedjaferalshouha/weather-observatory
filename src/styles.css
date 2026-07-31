@@ -938,17 +938,20 @@ main {
 
 .quick-source-panel {
   position: fixed;
-  top: 75px;
+  top: 50%;
   right: auto;
-  left: auto;
+  left: 50%;
   z-index: 44;
   width: min(430px, calc(100% - 40px));
+  max-height: calc(100dvh - 32px);
   padding: 18px;
+  overflow-y: auto;
   border: 1px solid rgba(101, 221, 255, .28);
   border-radius: 20px;
   background: rgba(5, 24, 40, .97);
   box-shadow: 0 24px 70px rgba(0, 8, 20, .48);
   backdrop-filter: blur(28px);
+  transform: translate(-50%, -50%);
 }
 
 .quick-source-panel > header {
@@ -3248,6 +3251,7 @@ footer > p {
     padding: 18px;
     overflow-y: auto;
     border-radius: 24px;
+    transform: none;
     animation: quickSheetIn .24s ease-out;
   }
 
