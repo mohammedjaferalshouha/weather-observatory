@@ -187,13 +187,18 @@ export async function fetchWeatherMapPoints(
 ): Promise<WeatherMapPoint[]> {
   if (field === 'none') return [];
   const sampledGrid = globeCenter ? gridForGlobe(globeCenter) : gridForBounds(bounds, zoom);
-  const grid = selectedLocation
+  const selectedPoint = selectedLocation
+    ? {
+        lat: clamp(selectedLocation.lat, -90, 90),
+        lon: normalizeLongitude(selectedLocation.lon)
+      }
+    : undefined;
+  const grid = field === 'temperature' && selectedPoint
+    ? [selectedPoint]
+    : selectedPoint
     ? [
         ...sampledGrid,
-        {
-          lat: clamp(selectedLocation.lat, -90, 90),
-          lon: normalizeLongitude(selectedLocation.lon)
-        }
+        selectedPoint
       ]
     : sampledGrid;
   const latitudes = grid.map((point) => point.lat.toFixed(4)).join(',');
