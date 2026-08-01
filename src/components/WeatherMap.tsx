@@ -211,12 +211,6 @@ export default function WeatherMap({
     [forecastSource]
   );
 
-  const yesterday = useMemo(() => {
-    const date = new Date();
-    date.setUTCDate(date.getUTCDate() - 1);
-    return date.toISOString().slice(0, 10);
-  }, []);
-
   const currentBounds = useCallback((): MapBounds | null => {
     const map = mapRef.current;
     if (!map) return null;
@@ -673,7 +667,8 @@ export default function WeatherMap({
       layerId: string,
       url: string,
       maxzoom: number,
-      opacity: number
+      opacity: number,
+      attribution?: string
     ) => {
       if (map.getLayer(layerId)) map.removeLayer(layerId);
       if (map.getSource(sourceId)) map.removeSource(sourceId);
@@ -683,7 +678,8 @@ export default function WeatherMap({
         tiles: [url],
         tileSize: 256,
         maxzoom,
-        bounds: webMercatorBounds
+        bounds: webMercatorBounds,
+        attribution
       });
       map.addLayer({
         id: layerId,
@@ -703,9 +699,10 @@ export default function WeatherMap({
       'satellite-layer',
       'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       19,
-      0.66
+      0.66,
+      'Esri, Maxar, Earthstar Geographics, and the GIS User Community'
     );
-  }, [mapReady, satelliteEnabled, yesterday]);
+  }, [mapReady, satelliteEnabled]);
 
   useEffect(() => {
     void updateAerosolPoints();
