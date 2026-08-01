@@ -102,6 +102,8 @@ const modelResolutionKm: Record<WeatherModelKey, number> = {
   jma: 20
 };
 
+const webMercatorBounds: [number, number, number, number] = [-180, -85.051129, 180, 85.051129];
+
 const resolutionForSource = (
   source: ForecastSource,
   customModels: WeatherModelKey[]
@@ -383,10 +385,10 @@ export default function WeatherMap({
             type: 'circle',
             source: 'weather-points',
             paint: {
-              'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 18, 8, 28],
+              'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 12, 8, 18],
               'circle-color': ['get', 'color'],
-              'circle-opacity': 0.28,
-              'circle-blur': 0.55
+              'circle-opacity': 0.2,
+              'circle-blur': 0.9
             }
           });
           map.addLayer({
@@ -394,9 +396,9 @@ export default function WeatherMap({
             type: 'circle',
             source: 'weather-points',
             paint: {
-              'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 12, 8, 18],
+              'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 8, 8, 13],
               'circle-color': ['get', 'color'],
-              'circle-opacity': 0.88,
+              'circle-opacity': 0.72,
               'circle-stroke-color': 'rgba(255,255,255,.82)',
               'circle-stroke-width': 1
             }
@@ -407,9 +409,11 @@ export default function WeatherMap({
             source: 'weather-points',
             layout: {
               'text-field': ['get', 'label'],
-              'text-size': ['interpolate', ['linear'], ['zoom'], 1, 10, 8, 13],
+              'text-size': ['interpolate', ['linear'], ['zoom'], 1, 0, 4, 0, 5, 9, 8, 12],
               'text-font': ['Noto Sans Regular'],
-              'text-allow-overlap': false
+              'text-allow-overlap': false,
+              'text-ignore-placement': false,
+              'text-padding': 6
             },
             paint: {
               'text-color': '#ffffff',
@@ -592,7 +596,11 @@ export default function WeatherMap({
       id: layerId,
       type: 'raster',
       source: sourceId,
-      paint: { 'raster-opacity': 0.72, 'raster-fade-duration': 180 }
+      paint: {
+        'raster-opacity': 0.72,
+        'raster-fade-duration': 0,
+        'raster-resampling': 'linear'
+      }
     }, firstBaseLabelLayer(map));
   }, [mapReady, radarEnabled, radarFrameIndex, radarFrames]);
 
@@ -610,12 +618,22 @@ export default function WeatherMap({
       if (map.getLayer(layerId)) map.removeLayer(layerId);
       if (map.getSource(sourceId)) map.removeSource(sourceId);
       if (!enabled) return;
-      map.addSource(sourceId, { type: 'raster', tiles: [url], tileSize: 256, maxzoom });
+      map.addSource(sourceId, {
+        type: 'raster',
+        tiles: [url],
+        tileSize: 256,
+        maxzoom,
+        bounds: webMercatorBounds
+      });
       map.addLayer({
         id: layerId,
         type: 'raster',
         source: sourceId,
-        paint: { 'raster-opacity': opacity, 'raster-fade-duration': 250 }
+        paint: {
+          'raster-opacity': opacity,
+          'raster-fade-duration': 0,
+          'raster-resampling': 'linear'
+        }
       }, firstBaseLabelLayer(map));
     };
 

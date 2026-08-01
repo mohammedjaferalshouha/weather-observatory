@@ -114,8 +114,9 @@ const averageDirection = (directions: number[]) => {
 };
 
 function gridForBounds(bounds: MapBounds, zoom: number) {
-  const columns = zoom < 2 ? 7 : zoom < 5 ? 6 : 5;
-  const rows = zoom < 2 ? 5 : 4;
+  // Keep the field smooth without creating an unbounded request at high zoom.
+  const columns = zoom < 2 ? 10 : zoom < 5 ? 9 : 8;
+  const rows = zoom < 2 ? 7 : zoom < 5 ? 6 : 5;
   const south = clamp(bounds.south, -75, 75);
   const north = clamp(bounds.north, -75, 75);
   let west = bounds.west;
@@ -138,8 +139,8 @@ function gridForBounds(bounds: MapBounds, zoom: number) {
 }
 
 function gridForGlobe(center: { lat: number; lon: number }) {
-  const latitudeOffsets = [-35, 5, 45];
-  const longitudeOffsets = [-65, -20, 20, 65];
+  const latitudeOffsets = [-55, -30, -5, 20, 45, 65];
+  const longitudeOffsets = [-75, -50, -25, 0, 25, 50, 75];
   return latitudeOffsets.flatMap((latitudeOffset) =>
     longitudeOffsets.map((longitudeOffset) => ({
       lat: clamp(center.lat + latitudeOffset, -70, 70),
@@ -185,14 +186,16 @@ export async function fetchWeatherMapPoints(
   selectedLocation?: { lat: number; lon: number }
 ): Promise<WeatherMapPoint[]> {
   if (field === 'none') return [];
+  const sampledGrid = globeCenter ? gridForGlobe(globeCenter) : gridForBounds(bounds, zoom);
   const grid = selectedLocation
-    ? [{
-        lat: clamp(selectedLocation.lat, -90, 90),
-        lon: normalizeLongitude(selectedLocation.lon)
-      }]
-    : globeCenter
-      ? gridForGlobe(globeCenter)
-      : gridForBounds(bounds, zoom);
+    ? [
+        ...sampledGrid,
+        {
+          lat: clamp(selectedLocation.lat, -90, 90),
+          lon: normalizeLongitude(selectedLocation.lon)
+        }
+      ]
+    : sampledGrid;
   const latitudes = grid.map((point) => point.lat.toFixed(4)).join(',');
   const longitudes = grid.map((point) => point.lon.toFixed(4)).join(',');
 
@@ -261,13 +264,15 @@ export async function fetchWeatherMapPoints(
 }
 
 export async function fetchActiveCyclones(signal?: AbortSignal): Promise<TropicalCycloneFeature[]> {
-  const response = await fetch(CYCLONES_URL, { signal });
+  const response = await fetch('/.netlify/functions/getCyclones', { signal });
   if (!response.ok) throw new Error('CYCLONES_FAILED');
   const payload = await response.json();
-  return (payload.features ?? [])
+  const features = Array.isArray(payload.features) ? payload.features : [];
+  return features
     .filter((feature: Record<string, unknown>) => {
       const properties = (feature.properties ?? {}) as Record<string, unknown>;
-      return String(properties.iscurrent).toLowerCase() === 'true';
+      const current = properties.iscurrent;
+      return current === undefined || String(current).toLowerCase() === 'true';
     })
     .map((feature: Record<string, unknown>) => {
       const properties = (feature.properties ?? {}) as Record<string, unknown>;

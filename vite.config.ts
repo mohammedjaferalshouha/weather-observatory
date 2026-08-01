@@ -7,6 +7,13 @@ export default defineConfig({
   server: {
     port: 3000,
     strictPort: true,
+    proxy: {
+      '/.netlify/functions/getCyclones': {
+        target: 'https://www.gdacs.org',
+        changeOrigin: true,
+        rewrite: () => '/gdacsapi/api/Events/geteventlist/SEARCH?eventlist=TC'
+      }
+    },
     watch: {
       ignored: ['**/.netlify/**']
     }
