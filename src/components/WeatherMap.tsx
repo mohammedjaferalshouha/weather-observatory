@@ -173,6 +173,7 @@ export default function WeatherMap({
   const languageRef = useRef(language);
   const onLocationSelectRef = useRef(onLocationSelect);
   const updateWeatherPointsRef = useRef<() => void>(() => undefined);
+  const updateAerosolPointsRef = useRef<() => void>(() => undefined);
   const lastWeatherPointsRef = useRef<WeatherMapPoint[]>([]);
   const pointAbortRef = useRef<AbortController | null>(null);
   const aerosolAbortRef = useRef<AbortController | null>(null);
@@ -276,19 +277,51 @@ export default function WeatherMap({
     , projection
   ]);
 
+  const updateAerosolPoints = useCallback(async () => {
+    const map = mapRef.current;
+    const bounds = currentBounds();
+    const source = map?.getSource('aerosol-points') as GeoJSONSource | undefined;
+    if (!map || !mapReady || !source || !bounds || !aerosolEnabled || projection === 'globe') {
+      source?.setData(emptyFeatureCollection);
+      aerosolAbortRef.current?.abort();
+      return;
+    }
+    aerosolAbortRef.current?.abort();
+    const controller = new AbortController();
+    aerosolAbortRef.current = controller;
+    try {
+      const points = await fetchWeatherMapPoints(
+        bounds,
+        map.getZoom(),
+        'dust',
+        forecastSource,
+        customBlendModels,
+        language,
+        0,
+        controller.signal,
+        undefined,
+        { lat: activeMapLocation.lat, lon: activeMapLocation.lon }
+      );
+      if (!controller.signal.aborted) source.setData(toPointsGeoJson(points));
+    } catch (reason) {
+      if ((reason as Error).name !== 'AbortError') source.setData(emptyFeatureCollection);
+    }
+  }, [activeMapLocation.lat, activeMapLocation.lon, aerosolEnabled, currentBounds, customBlendModels, forecastSource, language, mapReady, projection]);
+
   const schedulePointUpdate = useCallback(() => {
     if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
-    moveTimerRef.current = window.setTimeout(
-      () => updateWeatherPointsRef.current(),
-      isCompactMapViewport() ? 750 : 420
-    );
+    moveTimerRef.current = window.setTimeout(() => {
+      updateWeatherPointsRef.current();
+      updateAerosolPointsRef.current();
+    }, isCompactMapViewport() ? 750 : 420);
   }, []);
 
   useEffect(() => {
     languageRef.current = language;
     onLocationSelectRef.current = onLocationSelect;
     updateWeatherPointsRef.current = updateWeatherPoints;
-  }, [language, onLocationSelect, updateWeatherPoints]);
+    updateAerosolPointsRef.current = updateAerosolPoints;
+  }, [language, onLocationSelect, updateAerosolPoints, updateWeatherPoints]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -675,33 +708,9 @@ export default function WeatherMap({
   }, [mapReady, satelliteEnabled, yesterday]);
 
   useEffect(() => {
-    const map = mapRef.current;
-    const bounds = currentBounds();
-    const source = map?.getSource('aerosol-points') as GeoJSONSource | undefined;
-    if (!map || !mapReady || !source || !bounds || !aerosolEnabled || projection === 'globe') {
-      source?.setData(emptyFeatureCollection);
-      aerosolAbortRef.current?.abort();
-      return;
-    }
-    aerosolAbortRef.current?.abort();
-    const controller = new AbortController();
-    aerosolAbortRef.current = controller;
-    fetchWeatherMapPoints(
-      bounds,
-      map.getZoom(),
-      'dust',
-      forecastSource,
-      customBlendModels,
-      language,
-      0,
-      controller.signal,
-      undefined,
-      { lat: activeMapLocation.lat, lon: activeMapLocation.lon }
-    ).then((points) => {
-      if (!controller.signal.aborted) source.setData(toPointsGeoJson(points));
-    }).catch(() => undefined);
-    return () => controller.abort();
-  }, [activeMapLocation.lat, activeMapLocation.lon, aerosolEnabled, currentBounds, customBlendModels, forecastSource, language, mapReady, projection]);
+    void updateAerosolPoints();
+    return () => aerosolAbortRef.current?.abort();
+  }, [updateAerosolPoints]);
 
   useEffect(() => {
     if (!mapReady || !cyclonesEnabled) return;
