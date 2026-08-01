@@ -2560,6 +2560,16 @@ main {
   accent-color: #65ddff;
 }
 
+.map-layer-section label:has(input:disabled) {
+  opacity: .48;
+}
+
+.map-layer-note {
+  color: var(--muted);
+  font-size: .68rem;
+  line-height: 1.65;
+}
+
 .map-model-options,
 .field-options {
   display: flex;

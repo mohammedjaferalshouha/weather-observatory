@@ -703,6 +703,12 @@ export default function WeatherMap({
   const changeProjection = (mode: ProjectionMode) => {
     setProjection(mode);
     setPendingLocation(null);
+    if (mode === 'globe') {
+      setRadarEnabled(false);
+      setSatelliteEnabled(false);
+      setAerosolEnabled(false);
+      setPlaying(false);
+    }
     if (isCompactMapViewport()) setLayersOpen(false);
     mapRef.current?.flyTo({
       center: [location.lon, location.lat],
@@ -841,10 +847,17 @@ export default function WeatherMap({
 
           <div className="map-layer-section">
             <strong>{language === 'ar' ? 'الرصد والأقمار الصناعية' : 'Observations and satellite'}</strong>
-            <label><input type="checkbox" checked={radarEnabled} onChange={(event) => setRadarEnabled(event.target.checked)} /> {t.radar}</label>
-            <label><input type="checkbox" checked={satelliteEnabled} onChange={(event) => setSatelliteEnabled(event.target.checked)} /> {t.satellite}</label>
-            <label><input type="checkbox" checked={aerosolEnabled} onChange={(event) => setAerosolEnabled(event.target.checked)} /> {t.dustLayer}</label>
+            <label><input type="checkbox" disabled={projection === 'globe'} checked={radarEnabled} onChange={(event) => setRadarEnabled(event.target.checked)} /> {t.radar}</label>
+            <label><input type="checkbox" disabled={projection === 'globe'} checked={satelliteEnabled} onChange={(event) => setSatelliteEnabled(event.target.checked)} /> {t.satellite}</label>
+            <label><input type="checkbox" disabled={projection === 'globe'} checked={aerosolEnabled} onChange={(event) => setAerosolEnabled(event.target.checked)} /> {t.dustLayer}</label>
             <label><input type="checkbox" checked={cyclonesEnabled} onChange={(event) => setCyclonesEnabled(event.target.checked)} /> {t.cyclones}</label>
+            {projection === 'globe' && (
+              <small className="map-layer-note">
+                {language === 'ar'
+                  ? 'طبقات الصور والرادار متاحة في الخريطة المسطحة فقط لضمان عرض صحيح بلا تشوهات قطبية.'
+                  : 'Raster and radar layers are available on the flat map only to prevent polar projection artifacts.'}
+              </small>
+            )}
           </div>
         </aside>
       )}
