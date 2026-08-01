@@ -175,6 +175,7 @@ export default function WeatherMap({
   const updateWeatherPointsRef = useRef<() => void>(() => undefined);
   const lastWeatherPointsRef = useRef<WeatherMapPoint[]>([]);
   const pointAbortRef = useRef<AbortController | null>(null);
+  const aerosolAbortRef = useRef<AbortController | null>(null);
   const moveTimerRef = useRef<number | null>(null);
   const playTimerRef = useRef<number | null>(null);
   const gestureStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -357,6 +358,10 @@ export default function WeatherMap({
             type: 'geojson',
             data: emptyFeatureCollection
           });
+          map.addSource('aerosol-points', {
+            type: 'geojson',
+            data: emptyFeatureCollection
+          });
           map.addSource('sampling-area', {
             type: 'geojson',
             data: toCoverageGeoJson(location, resolutionForSource(forecastSource, customBlendModels))
@@ -419,6 +424,28 @@ export default function WeatherMap({
               'text-color': '#ffffff',
               'text-halo-color': 'rgba(3,13,26,.9)',
               'text-halo-width': 2
+            }
+          });
+          map.addLayer({
+            id: 'aerosol-points-halo',
+            type: 'circle',
+            source: 'aerosol-points',
+            paint: {
+              'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 10, 12, 24],
+              'circle-color': ['get', 'color'],
+              'circle-opacity': 0.2,
+              'circle-blur': 0.85
+            }
+          });
+          map.addLayer({
+            id: 'aerosol-points-core',
+            type: 'circle',
+            source: 'aerosol-points',
+            paint: {
+              'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 6, 12, 14],
+              'circle-color': ['get', 'color'],
+              'circle-opacity': 0.5,
+              'circle-blur': 0.25
             }
           });
           map.addSource('selected-location', {
@@ -641,19 +668,40 @@ export default function WeatherMap({
       satelliteEnabled,
       'satellite-source',
       'satellite-layer',
-      `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/MODIS_Terra_CorrectedReflectance_TrueColor/default/${yesterday}/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpg`,
-      9,
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      19,
       0.66
     );
-    configureRaster(
-      aerosolEnabled,
-      'aerosol-source',
-      'aerosol-layer',
-      `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/OMPS_Aerosol_Index/default/${yesterday}/GoogleMapsCompatible_Level6/{z}/{y}/{x}.png`,
-      6,
-      0.74
-    );
-  }, [aerosolEnabled, mapReady, satelliteEnabled, yesterday]);
+  }, [mapReady, satelliteEnabled, yesterday]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const bounds = currentBounds();
+    const source = map?.getSource('aerosol-points') as GeoJSONSource | undefined;
+    if (!map || !mapReady || !source || !bounds || !aerosolEnabled || projection === 'globe') {
+      source?.setData(emptyFeatureCollection);
+      aerosolAbortRef.current?.abort();
+      return;
+    }
+    aerosolAbortRef.current?.abort();
+    const controller = new AbortController();
+    aerosolAbortRef.current = controller;
+    fetchWeatherMapPoints(
+      bounds,
+      map.getZoom(),
+      'dust',
+      forecastSource,
+      customBlendModels,
+      language,
+      0,
+      controller.signal,
+      undefined,
+      { lat: activeMapLocation.lat, lon: activeMapLocation.lon }
+    ).then((points) => {
+      if (!controller.signal.aborted) source.setData(toPointsGeoJson(points));
+    }).catch(() => undefined);
+    return () => controller.abort();
+  }, [activeMapLocation.lat, activeMapLocation.lon, aerosolEnabled, currentBounds, customBlendModels, forecastSource, language, mapReady, projection]);
 
   useEffect(() => {
     if (!mapReady || !cyclonesEnabled) return;

@@ -113,10 +113,10 @@ const averageDirection = (directions: number[]) => {
   return (Math.atan2(vectors.y, vectors.x) * 180 / Math.PI + 360) % 360;
 };
 
-function gridForBounds(bounds: MapBounds, zoom: number) {
+function gridForBounds(bounds: MapBounds, zoom: number, dense = false) {
   // Keep the field smooth without creating an unbounded request at high zoom.
-  const columns = zoom < 2 ? 10 : zoom < 5 ? 9 : 8;
-  const rows = zoom < 2 ? 7 : zoom < 5 ? 6 : 5;
+  const columns = dense ? (zoom < 2 ? 16 : zoom < 5 ? 14 : 12) : (zoom < 2 ? 10 : zoom < 5 ? 9 : 8);
+  const rows = dense ? (zoom < 2 ? 10 : zoom < 5 ? 9 : 8) : (zoom < 2 ? 7 : zoom < 5 ? 6 : 5);
   const south = clamp(bounds.south, -75, 75);
   const north = clamp(bounds.north, -75, 75);
   let west = bounds.west;
@@ -186,7 +186,7 @@ export async function fetchWeatherMapPoints(
   selectedLocation?: { lat: number; lon: number }
 ): Promise<WeatherMapPoint[]> {
   if (field === 'none') return [];
-  const sampledGrid = globeCenter ? gridForGlobe(globeCenter) : gridForBounds(bounds, zoom);
+  const sampledGrid = globeCenter ? gridForGlobe(globeCenter) : gridForBounds(bounds, zoom, field === 'dust');
   const selectedPoint = selectedLocation
     ? {
         lat: clamp(selectedLocation.lat, -90, 90),
