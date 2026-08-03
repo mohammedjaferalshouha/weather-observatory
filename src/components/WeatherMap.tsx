@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   FiActivity,
   FiCheck,
-  FiClock,
   FiCloud,
   FiCrosshair,
   FiDroplet,
@@ -25,16 +24,22 @@ import { translations, weatherModels } from '../constants';
 import {
   fetchActiveCyclones,
   fetchRadarFrames,
-  fetchWeatherMapPoints,
-  MapBounds
+  fetchWeatherMapReading
 } from '../services/weatherMapService';
+import {
+  aerosolRaster,
+  fieldSourceLabel,
+  radarLegend,
+  satelliteRaster,
+  weatherRasterForField
+} from '../services/weatherTileService';
+import type { LegendBand, MapLegend } from '../services/weatherTileService';
 import {
   Coordinates,
   ForecastSource,
   Language,
   TropicalCycloneFeature,
   WeatherMapField,
-  WeatherMapPoint,
   WeatherModelKey
 } from '../types';
 
@@ -62,6 +67,7 @@ const fieldOptions: Array<{
   en: string;
   icon: React.ReactNode;
 }> = [
+  { key: 'none', ar: 'بدون حقل طقس', en: 'No weather field', icon: <FiMap /> },
   { key: 'temperature', ar: 'الحرارة', en: 'Temperature', icon: <FiThermometer /> },
   { key: 'precipitation', ar: 'الهطول', en: 'Precipitation', icon: <FiDroplet /> },
   { key: 'clouds', ar: 'الغيوم', en: 'Clouds', icon: <FiCloud /> },
@@ -72,71 +78,127 @@ const fieldOptions: Array<{
   { key: 'dust', ar: 'الغبار', en: 'Dust', icon: <FiWind /> }
 ];
 
+const LegendStrip = ({
+  bands,
+  label
+}: {
+  bands: LegendBand[];
+  label?: string;
+}) => (
+  <div className="map-legend-series">
+    {label && <strong className="map-legend-series-label">{label}</strong>}
+    <div
+      className="map-legend-band-strip"
+      dir="ltr"
+      style={{ gridTemplateColumns: `repeat(${bands.length}, minmax(4px, 1fr))` }}
+    >
+      {bands.map((band, index) => (
+        <span
+          key={`${band.label}-${index}`}
+          aria-hidden="true"
+          style={{ backgroundColor: band.color }}
+        />
+      ))}
+    </div>
+    <div className="map-legend-boundaries" dir="ltr">
+      <span>{bands[0]?.label}</span>
+      <span>{bands[Math.floor((bands.length - 1) / 2)]?.label}</span>
+      <span>{bands[bands.length - 1]?.label}</span>
+    </div>
+  </div>
+);
+
+const LegendBandList = ({ bands }: { bands: LegendBand[] }) => (
+  <div className="map-legend-band-list" dir="ltr">
+    {bands.map((band, index) => (
+      <span className="map-legend-band-item" key={`${band.label}-detail-${index}`}>
+        <i aria-hidden="true" style={{ backgroundColor: band.color }} />
+        <b>{band.label}</b>
+      </span>
+    ))}
+  </div>
+);
+
+const MapLegendCard = ({
+  language,
+  legend,
+  note,
+  title
+}: {
+  language: Language;
+  legend: MapLegend;
+  note?: string;
+  title: string;
+}) => {
+  const bands = legend.bands ?? [];
+  const secondaryBands = legend.secondaryBands ?? [];
+  const primaryLabel = language === 'ar' ? legend.primaryLabelAr : legend.primaryLabelEn;
+  const secondaryLabel = language === 'ar' ? legend.secondaryLabelAr : legend.secondaryLabelEn;
+  const unit = language === 'ar' ? legend.unitAr : legend.unitEn;
+  const legendNote = language === 'ar' ? legend.noteAr : legend.noteEn;
+
+  return (
+    <section className="map-color-legend glass-card" aria-label={title}>
+      <div className="map-color-legend-heading">
+        <strong>{title}</strong>
+        {unit && <span>{unit}</span>}
+      </div>
+
+      {legend.kind === 'bands' && bands.length > 0 && (
+        <>
+          <LegendStrip bands={bands} label={primaryLabel} />
+          {secondaryBands.length > 0 && (
+            <LegendStrip bands={secondaryBands} label={secondaryLabel} />
+          )}
+          <details className="map-legend-details">
+            <summary>
+              {language === 'ar' ? 'عرض جميع الفواصل الدقيقة' : 'Show all exact intervals'}
+            </summary>
+            {primaryLabel && <strong className="map-legend-detail-label">{primaryLabel}</strong>}
+            <LegendBandList bands={bands} />
+            {secondaryBands.length > 0 && (
+              <>
+                {secondaryLabel && <strong className="map-legend-detail-label">{secondaryLabel}</strong>}
+                <LegendBandList bands={secondaryBands} />
+              </>
+            )}
+          </details>
+        </>
+      )}
+
+      {legend.kind === 'image' && legend.imageUrl && (
+        <div className="map-official-legend-image" dir="ltr">
+          <img src={legend.imageUrl} alt={title} />
+        </div>
+      )}
+
+      {legend.kind === 'wind' && (
+        <div className="map-symbol-legend" dir="ltr">
+          <svg viewBox="0 0 120 42" aria-hidden="true">
+            <path d="M18 34 L83 8 M83 8 L108 11 M76 11 L99 17 M68 15 L88 21" />
+          </svg>
+          <span>{language === 'ar' ? 'اتجاه وسرعة الرياح' : 'Wind direction and speed'}</span>
+        </div>
+      )}
+
+      {legend.kind === 'pressure' && (
+        <div className="map-symbol-legend map-pressure-legend" dir="ltr">
+          <span className="map-isobar-sample" />
+          <b>1015 hPa</b>
+        </div>
+      )}
+
+      {(legendNote || note) && <small>{legendNote ?? note}</small>}
+    </section>
+  );
+};
+
 const futureHours = [0, 6, 12, 24, 48, 72];
 const isCompactMapViewport = () =>
   typeof window !== 'undefined'
   && window.matchMedia('(max-width: 780px), (hover: none) and (pointer: coarse)').matches;
 
-const toPointsGeoJson = (points: WeatherMapPoint[]) => ({
-  type: 'FeatureCollection' as const,
-  features: points.map((point, index) => ({
-    type: 'Feature' as const,
-    id: index,
-    geometry: {
-      type: 'Point' as const,
-      coordinates: [point.lon, point.lat]
-    },
-    properties: {
-      value: point.value,
-      label: point.label,
-      color: point.color
-    }
-  }))
-});
-
-const modelResolutionKm: Record<WeatherModelKey, number> = {
-  ecmwf: 9,
-  gfs: 25,
-  icon: 13,
-  gem: 15,
-  jma: 20
-};
-
 const webMercatorBounds: [number, number, number, number] = [-180, -85.051129, 180, 85.051129];
-
-const resolutionForSource = (
-  source: ForecastSource,
-  customModels: WeatherModelKey[]
-) => {
-  if (source === 'blend') return Math.max(...Object.values(modelResolutionKm));
-  if (source === 'custom') {
-    const models = customModels.length ? customModels : weatherModels.map((model) => model.key);
-    return Math.max(...models.map((model) => modelResolutionKm[model]));
-  }
-  return modelResolutionKm[source];
-};
-
-const toCoverageGeoJson = (center: { lat: number; lon: number }, radiusKm: number) => {
-  const coordinates: number[][] = [];
-  const latitudeRadians = center.lat * Math.PI / 180;
-  const latitudeScale = 1 / 110.574;
-  const longitudeScale = 1 / Math.max(20, 111.32 * Math.cos(latitudeRadians));
-  for (let index = 0; index <= 64; index += 1) {
-    const angle = index / 64 * Math.PI * 2;
-    coordinates.push([
-      center.lon + Math.cos(angle) * radiusKm * longitudeScale,
-      center.lat + Math.sin(angle) * radiusKm * latitudeScale
-    ]);
-  }
-  return {
-    type: 'Feature' as const,
-    properties: {},
-    geometry: {
-      type: 'Polygon' as const,
-      coordinates: [coordinates]
-    }
-  };
-};
 
 const firstBaseLabelLayer = (map: MapLibreMap) =>
   map.getStyle().layers?.find((layer) => layer.type === 'symbol' && !layer.id.startsWith('weather-'))?.id;
@@ -157,6 +219,50 @@ const toCyclonesGeoJson = (cyclones: TropicalCycloneFeature[]) => ({
   }))
 });
 
+const createMapIcon = (kind: 'pin' | 'cyclone') => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const context = canvas.getContext('2d');
+  if (!context) return new ImageData(1, 1);
+  context.clearRect(0, 0, 64, 64);
+  context.lineCap = 'round';
+  context.lineJoin = 'round';
+  if (kind === 'pin') {
+    context.fillStyle = '#ffffff';
+    context.strokeStyle = '#063a56';
+    context.lineWidth = 4;
+    context.beginPath();
+    context.moveTo(32, 58);
+    context.bezierCurveTo(26, 47, 15, 37, 15, 25);
+    context.arc(32, 25, 17, Math.PI, 0);
+    context.bezierCurveTo(49, 37, 38, 47, 32, 58);
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.fillStyle = '#20d6c7';
+    context.beginPath();
+    context.arc(32, 25, 7, 0, Math.PI * 2);
+    context.fill();
+  } else {
+    context.strokeStyle = '#ffffff';
+    context.lineWidth = 7;
+    context.beginPath();
+    context.arc(32, 32, 20, -2.7, 0.65);
+    context.stroke();
+    context.strokeStyle = '#ef4444';
+    context.lineWidth = 7;
+    context.beginPath();
+    context.arc(32, 32, 11, 0.4, 3.75);
+    context.stroke();
+    context.fillStyle = '#ffffff';
+    context.beginPath();
+    context.arc(32, 32, 4, 0, Math.PI * 2);
+    context.fill();
+  }
+  return context.getImageData(0, 0, 64, 64);
+};
+
 export default function WeatherMap({
   language,
   location,
@@ -172,17 +278,11 @@ export default function WeatherMap({
   const mapRef = useRef<MapLibreMap | null>(null);
   const languageRef = useRef(language);
   const onLocationSelectRef = useRef(onLocationSelect);
-  const updateWeatherPointsRef = useRef<() => void>(() => undefined);
-  const updateAerosolPointsRef = useRef<() => void>(() => undefined);
-  const lastWeatherPointsRef = useRef<WeatherMapPoint[]>([]);
-  const pointAbortRef = useRef<AbortController | null>(null);
-  const aerosolAbortRef = useRef<AbortController | null>(null);
-  const moveTimerRef = useRef<number | null>(null);
+  const readingAbortRef = useRef<AbortController | null>(null);
   const playTimerRef = useRef<number | null>(null);
   const gestureStartRef = useRef<{ x: number; y: number } | null>(null);
   const gestureMovedRef = useRef(false);
   const gestureResetTimerRef = useRef<number | null>(null);
-  const hasWeatherPointsRef = useRef(false);
   const [projection, setProjection] = useState<ProjectionMode>('flat');
   const [field, setField] = useState<WeatherMapField>('temperature');
   const [radarEnabled, setRadarEnabled] = useState(false);
@@ -192,7 +292,6 @@ export default function WeatherMap({
   const [layersOpen, setLayersOpen] = useState(() => !isCompactMapViewport());
   const [mapReady, setMapReady] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [fieldLoading, setFieldLoading] = useState(false);
   const [error, setError] = useState('');
   const [forecastHourIndex, setForecastHourIndex] = useState(0);
   const [radarFrames, setRadarFrames] = useState<Array<{ host: string; path: string; time: number }>>([]);
@@ -200,128 +299,29 @@ export default function WeatherMap({
   const [playing, setPlaying] = useState(false);
   const [creditsOpen, setCreditsOpen] = useState(false);
   const [pendingLocation, setPendingLocation] = useState<Coordinates | null>(null);
-  const activeMapLocation = pendingLocation ?? location;
-  const samplingRadiusKm = useMemo(
-    () => resolutionForSource(forecastSource, customBlendModels),
-    [customBlendModels, forecastSource]
+  const [selectedFieldReading, setSelectedFieldReading] = useState<{ text: string } | null>(null);
+  const selectedCoordinates = pendingLocation ?? location;
+  const forecastHour = futureHours[forecastHourIndex];
+  const fieldRaster = useMemo(
+    () => field === 'none' ? null : weatherRasterForField(field, forecastHour),
+    [field, forecastHour]
   );
-
-  const selectedModel = useMemo(
-    () => weatherModels.find((model) => model.key === forecastSource),
-    [forecastSource]
+  const currentAerosolRaster = useMemo(
+    () => aerosolRaster(forecastHour),
+    [forecastHour]
   );
-
-  const currentBounds = useCallback((): MapBounds | null => {
-    const map = mapRef.current;
-    if (!map) return null;
-    const bounds = map.getBounds();
-    return {
-      west: bounds.getWest(),
-      east: bounds.getEast(),
-      south: bounds.getSouth(),
-      north: bounds.getNorth()
-    };
-  }, []);
-
-  const updateWeatherPoints = useCallback(async () => {
-    const map = mapRef.current;
-    const bounds = currentBounds();
-    if (!map || !bounds || field === 'none') return;
-    pointAbortRef.current?.abort();
-    const controller = new AbortController();
-    pointAbortRef.current = controller;
-    const showInitialProgress = !hasWeatherPointsRef.current;
-    if (showInitialProgress) setFieldLoading(true);
-    try {
-      const points = await fetchWeatherMapPoints(
-        bounds,
-        map.getZoom(),
-        field,
-        forecastSource,
-        customBlendModels,
-        language,
-        futureHours[forecastHourIndex],
-        controller.signal,
-        projection === 'globe'
-          ? { lat: map.getCenter().lat, lon: map.getCenter().lng }
-          : undefined,
-        { lat: activeMapLocation.lat, lon: activeMapLocation.lon }
-      );
-      const source = map.getSource('weather-points') as GeoJSONSource | undefined;
-      lastWeatherPointsRef.current = points;
-      source?.setData(toPointsGeoJson(points));
-      hasWeatherPointsRef.current = true;
-      setError('');
-    } catch (reason) {
-      if ((reason as Error).name !== 'AbortError') {
-        setError(language === 'ar' ? 'تعذر تحديث طبقة الطقس المختارة' : 'Could not update the selected weather layer');
-      }
-    } finally {
-      if (!controller.signal.aborted && showInitialProgress) setFieldLoading(false);
-    }
-  }, [
-    currentBounds,
-    customBlendModels,
-    activeMapLocation.lat,
-    activeMapLocation.lon,
-    field,
-    forecastHourIndex,
-    forecastSource,
-    language
-    , projection
-  ]);
-
-  const updateAerosolPoints = useCallback(async () => {
-    const map = mapRef.current;
-    const bounds = currentBounds();
-    const source = map?.getSource('aerosol-points') as GeoJSONSource | undefined;
-    if (!map || !mapReady || !source || !bounds || !aerosolEnabled || projection === 'globe') {
-      source?.setData(emptyFeatureCollection);
-      aerosolAbortRef.current?.abort();
-      return;
-    }
-    aerosolAbortRef.current?.abort();
-    const controller = new AbortController();
-    aerosolAbortRef.current = controller;
-    try {
-      const points = await fetchWeatherMapPoints(
-        bounds,
-        map.getZoom(),
-        'dust',
-        forecastSource,
-        customBlendModels,
-        language,
-        0,
-        controller.signal,
-        undefined,
-        { lat: activeMapLocation.lat, lon: activeMapLocation.lon }
-      );
-      if (!controller.signal.aborted) source.setData(toPointsGeoJson(points));
-    } catch (reason) {
-      if ((reason as Error).name !== 'AbortError') source.setData(emptyFeatureCollection);
-    }
-  }, [activeMapLocation.lat, activeMapLocation.lon, aerosolEnabled, currentBounds, customBlendModels, forecastSource, language, mapReady, projection]);
-
-  const schedulePointUpdate = useCallback(() => {
-    if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
-    moveTimerRef.current = window.setTimeout(() => {
-      updateWeatherPointsRef.current();
-      updateAerosolPointsRef.current();
-    }, isCompactMapViewport() ? 750 : 420);
-  }, []);
 
   useEffect(() => {
     languageRef.current = language;
     onLocationSelectRef.current = onLocationSelect;
-    updateWeatherPointsRef.current = updateWeatherPoints;
-    updateAerosolPointsRef.current = updateAerosolPoints;
-  }, [language, onLocationSelect, updateAerosolPoints, updateWeatherPoints]);
+  }, [language, onLocationSelect]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     let active = true;
     let map: MapLibreMap | null = null;
     let resizeObserver: ResizeObserver | null = null;
+    let mapHasLoaded = false;
     const mapContainer = containerRef.current;
     const onPointerDown = (event: PointerEvent) => {
       gestureStartRef.current = { x: event.clientX, y: event.clientY };
@@ -368,7 +368,9 @@ export default function WeatherMap({
           canvasContextAttributes: { antialias: !isCompactMapViewport() }
         });
         mapRef.current = map;
-        resizeObserver = new ResizeObserver(() => map?.resize());
+        resizeObserver = new ResizeObserver(() => {
+          map?.resize();
+        });
         resizeObserver.observe(containerRef.current);
         map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-left');
         map.addControl(
@@ -381,131 +383,51 @@ export default function WeatherMap({
 
         map.on('load', () => {
           if (!map) return;
-          map.addSource('weather-points', {
-            type: 'geojson',
-            data: emptyFeatureCollection
-          });
-          map.addSource('aerosol-points', {
-            type: 'geojson',
-            data: emptyFeatureCollection
-          });
-          map.addSource('sampling-area', {
-            type: 'geojson',
-            data: toCoverageGeoJson(location, resolutionForSource(forecastSource, customBlendModels))
-          });
-          map.addLayer({
-            id: 'sampling-area-fill',
-            type: 'fill',
-            source: 'sampling-area',
-            paint: {
-              'fill-color': '#65ddff',
-              'fill-opacity': 0.1
-            }
-          });
-          map.addLayer({
-            id: 'sampling-area-outline',
-            type: 'line',
-            source: 'sampling-area',
-            paint: {
-              'line-color': 'rgba(101,221,255,.9)',
-              'line-width': 2,
-              'line-dasharray': [2, 2]
-            }
-          });
-          map.addLayer({
-            id: 'weather-points-halo',
-            type: 'circle',
-            source: 'weather-points',
-            paint: {
-              'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 12, 8, 18],
-              'circle-color': ['get', 'color'],
-              'circle-opacity': 0.2,
-              'circle-blur': 0.9
-            }
-          });
-          map.addLayer({
-            id: 'weather-points-core',
-            type: 'circle',
-            source: 'weather-points',
-            paint: {
-              'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 8, 8, 13],
-              'circle-color': ['get', 'color'],
-              'circle-opacity': 0.72,
-              'circle-stroke-color': 'rgba(255,255,255,.82)',
-              'circle-stroke-width': 1
-            }
-          });
-          map.addLayer({
-            id: 'weather-points-label',
-            type: 'symbol',
-            source: 'weather-points',
-            layout: {
-              'text-field': ['get', 'label'],
-              'text-size': ['interpolate', ['linear'], ['zoom'], 1, 0, 4, 0, 5, 9, 8, 12],
-              'text-font': ['Noto Sans Regular'],
-              'text-allow-overlap': false,
-              'text-ignore-placement': false,
-              'text-padding': 6
-            },
-            paint: {
-              'text-color': '#ffffff',
-              'text-halo-color': 'rgba(3,13,26,.9)',
-              'text-halo-width': 2
-            }
-          });
-          map.addLayer({
-            id: 'aerosol-points-halo',
-            type: 'circle',
-            source: 'aerosol-points',
-            paint: {
-              'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 10, 12, 24],
-              'circle-color': ['get', 'color'],
-              'circle-opacity': 0.2,
-              'circle-blur': 0.85
-            }
-          });
-          map.addLayer({
-            id: 'aerosol-points-core',
-            type: 'circle',
-            source: 'aerosol-points',
-            paint: {
-              'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 6, 12, 14],
-              'circle-color': ['get', 'color'],
-              'circle-opacity': 0.5,
-              'circle-blur': 0.25
-            }
-          });
+          mapHasLoaded = true;
+          map.addImage('selected-pin-icon', createMapIcon('pin'), { pixelRatio: 2 });
+          map.addImage('cyclone-map-icon', createMapIcon('cyclone'), { pixelRatio: 2 });
           map.addSource('selected-location', {
             type: 'geojson',
             data: {
               type: 'Feature',
               geometry: { type: 'Point', coordinates: [location.lon, location.lat] },
-              properties: {}
+              properties: { reading: '' }
             }
           });
           map.addLayer({
-            id: 'selected-location-ring',
-            type: 'circle',
+            id: 'selected-location-symbol',
+            type: 'symbol',
             source: 'selected-location',
+            layout: {
+              'icon-image': 'selected-pin-icon',
+              'icon-size': 0.7,
+              'icon-anchor': 'bottom',
+              'icon-allow-overlap': true,
+              'text-field': ['get', 'reading'],
+              'text-offset': [0, -3.35],
+              'text-size': 13,
+              'text-allow-overlap': true
+            },
             paint: {
-              'circle-radius': 10,
-              'circle-color': 'rgba(101,221,255,.18)',
-              'circle-stroke-width': 3,
-              'circle-stroke-color': 'rgba(255,255,255,.95)'
+              'text-color': '#ffffff',
+              'text-halo-color': '#063a56',
+              'text-halo-width': 3
             }
           });
-          map.addSource('cyclones', { type: 'geojson', data: emptyFeatureCollection });
+          map.addSource('cyclones', {
+            type: 'geojson',
+            data: emptyFeatureCollection,
+            attribution: 'GDACS'
+          });
           map.addLayer({
             id: 'cyclones-layer',
-            type: 'circle',
+            type: 'symbol',
             source: 'cyclones',
-            layout: { visibility: 'none' },
-            paint: {
-              'circle-radius': 13,
-              'circle-color': '#ef4444',
-              'circle-stroke-width': 4,
-              'circle-stroke-color': 'rgba(255,255,255,.86)',
-              'circle-blur': 0.08
+            layout: {
+              visibility: 'none',
+              'icon-image': 'cyclone-map-icon',
+              'icon-size': 0.82,
+              'icon-allow-overlap': true
             }
           });
           map.addLayer({
@@ -525,7 +447,6 @@ export default function WeatherMap({
             }
           });
 
-          map.on('moveend', schedulePointUpdate);
           map.on('click', (event) => {
             if (gestureMovedRef.current) return;
             const nextLocation: Coordinates = {
@@ -541,7 +462,7 @@ export default function WeatherMap({
             source?.setData({
               type: 'Feature',
               geometry: { type: 'Point', coordinates: [nextLocation.lon, nextLocation.lat] },
-              properties: {}
+              properties: { reading: '' }
             });
           });
           setMapReady(true);
@@ -549,8 +470,10 @@ export default function WeatherMap({
           map.resize();
         });
         map.on('error', () => {
-          setError(t.mapUnavailable);
-          setLoading(false);
+          if (!mapHasLoaded) {
+            setError(t.mapUnavailable);
+            setLoading(false);
+          }
         });
       } catch {
         setError(t.mapUnavailable);
@@ -561,8 +484,7 @@ export default function WeatherMap({
     initialize();
     return () => {
       active = false;
-      pointAbortRef.current?.abort();
-      if (moveTimerRef.current) window.clearTimeout(moveTimerRef.current);
+      readingAbortRef.current?.abort();
       if (gestureResetTimerRef.current) window.clearTimeout(gestureResetTimerRef.current);
       mapContainer.removeEventListener('pointerdown', onPointerDown);
       mapContainer.removeEventListener('pointermove', onPointerMove);
@@ -577,14 +499,88 @@ export default function WeatherMap({
   }, []);
 
   useEffect(() => {
-    if (!mapReady || pendingLocation) return;
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const sourceId = 'weather-field-source';
+    const layerId = 'weather-field-layer';
+    if (map.getLayer(layerId)) map.removeLayer(layerId);
+    if (map.getSource(sourceId)) map.removeSource(sourceId);
+    if (!fieldRaster) return;
+    map.addSource(sourceId, {
+      type: 'raster',
+      tiles: [fieldRaster.tileUrl],
+      tileSize: fieldRaster.tileSize,
+      maxzoom: fieldRaster.maxZoom,
+      bounds: webMercatorBounds,
+      attribution: fieldRaster.attribution
+    });
+    map.addLayer({
+      id: layerId,
+      type: 'raster',
+      source: sourceId,
+      paint: {
+        'raster-opacity': satelliteEnabled
+          ? Math.min(fieldRaster.opacity, 0.56)
+          : fieldRaster.opacity,
+        'raster-fade-duration': 0,
+        'raster-resampling': 'linear'
+      }
+    }, firstBaseLabelLayer(map));
+  }, [fieldRaster, mapReady, satelliteEnabled]);
+
+  useEffect(() => {
+    readingAbortRef.current?.abort();
+    setSelectedFieldReading(null);
+    if (!pendingLocation || field === 'none') return;
+    const controller = new AbortController();
+    readingAbortRef.current = controller;
+    const timer = window.setTimeout(() => {
+      fetchWeatherMapReading(
+        pendingLocation,
+        field,
+        language,
+        forecastHour,
+        controller.signal
+      )
+        .then((point) => {
+          if (!controller.signal.aborted && point) {
+            setSelectedFieldReading({ text: point.label });
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) setSelectedFieldReading(null);
+        });
+    }, 280);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    field,
+    forecastHour,
+    language,
+    pendingLocation
+  ]);
+
+  useEffect(() => {
+    if (!mapReady) return;
     const map = mapRef.current;
     const source = map?.getSource('selected-location') as GeoJSONSource | undefined;
     source?.setData({
       type: 'Feature',
-      geometry: { type: 'Point', coordinates: [location.lon, location.lat] },
-      properties: {}
+      geometry: { type: 'Point', coordinates: [selectedCoordinates.lon, selectedCoordinates.lat] },
+      properties: { reading: selectedFieldReading?.text ?? '' }
     });
+  }, [
+    mapReady,
+    selectedCoordinates.lat,
+    selectedCoordinates.lon,
+    selectedFieldReading?.text
+  ]);
+
+  useEffect(() => {
+    if (!mapReady || pendingLocation) return;
+    const map = mapRef.current;
     if (location.source === 'geolocation') {
       map?.flyTo({
         center: [location.lon, location.lat],
@@ -594,30 +590,10 @@ export default function WeatherMap({
   }, [location.lat, location.lon, location.source, mapReady, pendingLocation]);
 
   useEffect(() => {
-    if (mapReady) updateWeatherPoints();
-  }, [mapReady, updateWeatherPoints]);
-
-  useEffect(() => {
     const map = mapRef.current;
     if (!map || !mapReady) return;
     map.setProjection({ type: projection === 'globe' ? 'globe' : 'mercator' });
-    const source = map.getSource('weather-points') as GeoJSONSource | undefined;
-    if (source && lastWeatherPointsRef.current.length) {
-      source.setData(toPointsGeoJson(lastWeatherPointsRef.current));
-    }
   }, [mapReady, projection]);
-
-  useEffect(() => {
-    if (!mapReady) return;
-    const map = mapRef.current;
-    const areaSource = map?.getSource('sampling-area') as GeoJSONSource | undefined;
-    areaSource?.setData(toCoverageGeoJson(activeMapLocation, samplingRadiusKm));
-  }, [
-    activeMapLocation.lat,
-    activeMapLocation.lon,
-    mapReady,
-    samplingRadiusKm
-  ]);
 
   useEffect(() => {
     if (!mapReady || !radarEnabled || radarFrames.length) return;
@@ -626,6 +602,7 @@ export default function WeatherMap({
       .then((frames) => {
         setRadarFrames(frames);
         setRadarFrameIndex(Math.max(0, frames.length - 1));
+        setError('');
       })
       .catch(() => setError(language === 'ar' ? 'تعذر تحميل الرادار الآن' : 'Radar is unavailable'));
     return () => controller.abort();
@@ -644,7 +621,9 @@ export default function WeatherMap({
       type: 'raster',
       tiles: [`${frame.host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`],
       tileSize: 256,
-      maxzoom: 7
+      maxzoom: 7,
+      bounds: webMercatorBounds,
+      attribution: 'RainViewer'
     });
     map.addLayer({
       id: layerId,
@@ -665,49 +644,48 @@ export default function WeatherMap({
       enabled: boolean,
       sourceId: string,
       layerId: string,
-      url: string,
-      maxzoom: number,
-      opacity: number,
-      attribution?: string
+      raster: ReturnType<typeof satelliteRaster>,
+      belowField = false
     ) => {
       if (map.getLayer(layerId)) map.removeLayer(layerId);
       if (map.getSource(sourceId)) map.removeSource(sourceId);
       if (!enabled) return;
       map.addSource(sourceId, {
         type: 'raster',
-        tiles: [url],
-        tileSize: 256,
-        maxzoom,
+        tiles: [raster.tileUrl],
+        tileSize: raster.tileSize,
+        maxzoom: raster.maxZoom,
         bounds: webMercatorBounds,
-        attribution
+        attribution: raster.attribution
       });
       map.addLayer({
         id: layerId,
         type: 'raster',
         source: sourceId,
         paint: {
-          'raster-opacity': opacity,
+          'raster-opacity': raster.opacity,
           'raster-fade-duration': 0,
           'raster-resampling': 'linear'
         }
-      }, firstBaseLabelLayer(map));
+      }, belowField && map.getLayer('weather-field-layer')
+        ? 'weather-field-layer'
+        : firstBaseLabelLayer(map));
     };
 
     configureRaster(
       satelliteEnabled,
       'satellite-source',
       'satellite-layer',
-      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      19,
-      0.66,
-      'Esri, Maxar, Earthstar Geographics, and the GIS User Community'
+      satelliteRaster(),
+      true
     );
-  }, [mapReady, satelliteEnabled]);
-
-  useEffect(() => {
-    void updateAerosolPoints();
-    return () => aerosolAbortRef.current?.abort();
-  }, [updateAerosolPoints]);
+    configureRaster(
+      aerosolEnabled,
+      'aerosol-source',
+      'aerosol-layer',
+      currentAerosolRaster
+    );
+  }, [aerosolEnabled, currentAerosolRaster, fieldRaster, mapReady, satelliteEnabled]);
 
   useEffect(() => {
     if (!mapReady || !cyclonesEnabled) return;
@@ -719,6 +697,7 @@ export default function WeatherMap({
         source?.setData(toCyclonesGeoJson(cyclones));
         map?.setLayoutProperty('cyclones-layer', 'visibility', 'visible');
         map?.setLayoutProperty('cyclones-label', 'visibility', 'visible');
+        setError('');
       })
       .catch(() => setError(language === 'ar' ? 'تعذر تحديث الأعاصير الآن' : 'Cyclone data is unavailable'));
     return () => controller.abort();
@@ -732,20 +711,50 @@ export default function WeatherMap({
   }, [cyclonesEnabled, mapReady]);
 
   useEffect(() => {
-    if (!playing || !radarEnabled || radarFrames.length < 2) return;
-    playTimerRef.current = window.setInterval(() => {
-      setRadarFrameIndex((index) => (index + 1) % radarFrames.length);
-    }, 650);
+    if (!playing) return;
+    if (radarEnabled && radarFrames.length >= 2) {
+      playTimerRef.current = window.setInterval(() => {
+        setRadarFrameIndex((index) => (index + 1) % radarFrames.length);
+      }, 650);
+    } else {
+      playTimerRef.current = window.setInterval(() => {
+        setForecastHourIndex((index) => (index + 1) % futureHours.length);
+      }, 2200);
+    }
     return () => {
       if (playTimerRef.current) window.clearInterval(playTimerRef.current);
     };
   }, [playing, radarEnabled, radarFrames.length]);
 
-  const mapSourceLabel = selectedModel
-    ? `${selectedModel.label} · ${language === 'ar' ? selectedModel.nameAr : selectedModel.nameEn}`
-    : forecastSource === 'custom'
-      ? t.customBlend
-      : t.blend;
+  const mapSourceLabel = radarEnabled
+    ? (language === 'ar' ? 'رادار الأمطار · رين فيور' : 'Rain radar · RainViewer')
+    : aerosolEnabled
+      ? fieldSourceLabel(currentAerosolRaster, language)
+      : fieldRaster
+        ? fieldSourceLabel(fieldRaster, language)
+        : satelliteEnabled
+          ? fieldSourceLabel(satelliteRaster(), language)
+          : language === 'ar'
+            ? 'خريطة الأساس'
+            : 'Base map';
+  const activeFieldOption = fieldOptions.find((option) => option.key === field);
+  const activeMapLegend = radarEnabled
+    ? radarLegend
+    : aerosolEnabled
+      ? currentAerosolRaster.legend
+      : fieldRaster?.legend;
+  const activeLegendTitle = radarEnabled
+    ? (language === 'ar' ? 'رادار الأمطار' : 'Rain radar')
+    : aerosolEnabled
+      ? (language === 'ar' ? 'الغبار والهباء الجوي' : 'Dust and aerosol')
+      : activeFieldOption
+        ? (language === 'ar' ? activeFieldOption.ar : activeFieldOption.en)
+        : '';
+  const activeLegendNote = radarEnabled || aerosolEnabled
+    ? undefined
+    : language === 'ar'
+      ? fieldRaster?.noteAr
+      : fieldRaster?.noteEn;
 
   const radarTime = radarFrames[radarFrameIndex]
     ? new Intl.DateTimeFormat(language === 'ar' ? 'ar-JO' : 'en-US', {
@@ -753,16 +762,13 @@ export default function WeatherMap({
         minute: '2-digit'
       }).format(new Date(radarFrames[radarFrameIndex].time * 1000))
     : '';
+  const forecastTimeLabel = futureHours[forecastHourIndex] === 0
+    ? (language === 'ar' ? 'الآن' : 'Now')
+    : `+${futureHours[forecastHourIndex]}h`;
 
   const changeProjection = (mode: ProjectionMode) => {
     setProjection(mode);
     setPendingLocation(null);
-    if (mode === 'globe') {
-      setRadarEnabled(false);
-      setSatelliteEnabled(false);
-      setAerosolEnabled(false);
-      setPlaying(false);
-    }
     if (isCompactMapViewport()) setLayersOpen(false);
     mapRef.current?.flyTo({
       center: [location.lon, location.lat],
@@ -771,6 +777,24 @@ export default function WeatherMap({
       bearing: 0,
       duration: 900
     });
+  };
+
+  const toggleRadar = (enabled: boolean) => {
+    setError('');
+    setRadarEnabled(enabled);
+    if (enabled) {
+      setAerosolEnabled(false);
+      setPlaying(false);
+    }
+  };
+
+  const toggleAerosol = (enabled: boolean) => {
+    setError('');
+    setAerosolEnabled(enabled);
+    if (enabled) {
+      setRadarEnabled(false);
+      setPlaying(false);
+    }
   };
 
   const confirmPendingLocation = () => {
@@ -843,8 +867,8 @@ export default function WeatherMap({
           <strong>{t.mapCredits}</strong>
           <p>
             {language === 'ar'
-              ? 'خريطة الأساس: بيانات خرائط مفتوحة · الرادار: رصد خارجي · الأقمار الصناعية: وكالة الفضاء الأمريكية · الأعاصير: نظام الإنذار العالمي'
-              : 'Base map: open map data · Radar: external observations · Satellite: NASA · Cyclones: GDACS'}
+              ? 'خريطة الأساس: بيانات خرائط مفتوحة · حقول الطقس: الأرصاد الألمانية وكوبرنيكوس · الرادار: رين فيور · صور الأقمار: وكالة الفضاء الأمريكية · الأعاصير: نظام الإنذار العالمي'
+              : 'Base map: open map data · Weather fields: DWD and CAMS · Radar: RainViewer · Satellite: NASA GIBS · Cyclones: GDACS'}
           </p>
         </div>
       )}
@@ -852,7 +876,7 @@ export default function WeatherMap({
       {layersOpen && (
         <aside className="map-layers-panel glass-card">
           <div className="map-layer-section">
-            <strong>{language === 'ar' ? 'مصدر النموذج' : 'Forecast model'}</strong>
+            <strong>{language === 'ar' ? 'مصدر توقعات الموقع المحدد' : 'Selected-location forecast source'}</strong>
             <div className="map-model-options">
               <button
                 type="button"
@@ -889,7 +913,10 @@ export default function WeatherMap({
                 <button
                   type="button"
                   key={option.key}
-                  className={field === option.key ? 'active' : ''}
+                  className={[
+                    field === option.key ? 'active' : '',
+                    option.key === 'none' ? 'field-none-option' : ''
+                  ].filter(Boolean).join(' ')}
                   onClick={() => setField(option.key)}
                 >
                   {option.icon}
@@ -901,31 +928,59 @@ export default function WeatherMap({
 
           <div className="map-layer-section">
             <strong>{language === 'ar' ? 'الرصد والأقمار الصناعية' : 'Observations and satellite'}</strong>
-            <label><input type="checkbox" disabled={projection === 'globe'} checked={radarEnabled} onChange={(event) => setRadarEnabled(event.target.checked)} /> {t.radar}</label>
-            <label><input type="checkbox" disabled={projection === 'globe'} checked={satelliteEnabled} onChange={(event) => setSatelliteEnabled(event.target.checked)} /> {t.satellite}</label>
-            <label><input type="checkbox" disabled={projection === 'globe'} checked={aerosolEnabled} onChange={(event) => setAerosolEnabled(event.target.checked)} /> {t.dustLayer}</label>
-            <label><input type="checkbox" checked={cyclonesEnabled} onChange={(event) => setCyclonesEnabled(event.target.checked)} /> {t.cyclones}</label>
-            {projection === 'globe' && (
-              <small className="map-layer-note">
-                {language === 'ar'
-                  ? 'طبقات الصور والرادار متاحة في الخريطة المسطحة فقط لضمان عرض صحيح بلا تشوهات قطبية.'
-                  : 'Raster and radar layers are available on the flat map only to prevent polar projection artifacts.'}
-              </small>
-            )}
+            <label><input type="checkbox" checked={radarEnabled} onChange={(event) => toggleRadar(event.target.checked)} /> {t.radar}</label>
+            <label><input type="checkbox" checked={satelliteEnabled} onChange={(event) => setSatelliteEnabled(event.target.checked)} /> {t.satellite}</label>
+            <label><input type="checkbox" checked={aerosolEnabled} onChange={(event) => toggleAerosol(event.target.checked)} /> {t.dustLayer}</label>
+            <label>
+              <input
+                type="checkbox"
+                checked={cyclonesEnabled}
+                onChange={(event) => {
+                  setError('');
+                  setCyclonesEnabled(event.target.checked);
+                }}
+              />
+              {t.cyclones}
+            </label>
+            <small className="map-layer-note">
+              {language === 'ar'
+                ? 'يمكن الجمع بين الأقمار الصناعية والأعاصير وأي حقل طقس. وللحفاظ على السلاسة والوضوح يعمل الرادار أو الهباء الجوي، واحدًا فقط في الوقت نفسه.'
+                : 'Satellite, cyclones and any weather field can be combined. For clarity and performance, radar and aerosol are mutually exclusive.'}
+            </small>
           </div>
         </aside>
       )}
 
       <div className="weather-map" ref={containerRef} />
 
+      {activeMapLegend && activeLegendTitle && !pendingLocation && (
+        <MapLegendCard
+          language={language}
+          legend={activeMapLegend}
+          note={activeLegendNote}
+          title={activeLegendTitle}
+        />
+      )}
+
       {pendingLocation && (
         <div className="map-selection-card glass-card" role="status">
-          <div>
+          <div className="map-selection-place">
             <strong>{language === 'ar' ? 'موقع محدد على الخريطة' : 'Selected map location'}</strong>
             <span>
               {pendingLocation.lat.toFixed(5)}، {pendingLocation.lon.toFixed(5)}
             </span>
           </div>
+          {selectedFieldReading && activeFieldOption && (
+            <div className="map-selection-reading">
+              <span>{language === 'ar' ? activeFieldOption.ar : activeFieldOption.en}</span>
+              <strong>{selectedFieldReading.text}</strong>
+              <small>
+                {language === 'ar' ? 'قراءة الموقع المحدد' : 'Selected-location reading'}
+                {' · '}
+                {forecastTimeLabel}
+              </small>
+            </div>
+          )}
           <div className="map-selection-actions">
             <button type="button" className="confirm" onClick={confirmPendingLocation}>
               <FiCheck /> {language === 'ar' ? 'عرض التوقعات' : 'View forecast'}
@@ -937,21 +992,29 @@ export default function WeatherMap({
         </div>
       )}
 
-      {(loading || fieldLoading) && (
+      {loading && (
         <div className="map-loading">
           <span className="mini-loader" />
-          <strong>{loading ? t.mapLoading : language === 'ar' ? 'نحدّث الطبقة' : 'Updating layer'}</strong>
+          <strong>{t.mapLoading}</strong>
         </div>
       )}
 
       {!pendingLocation && (
         <div className="map-status glass-card">
           <div><span>{language === 'ar' ? 'المصدر' : 'Source'}</span><strong>{mapSourceLabel}</strong></div>
-          <div><span>{language === 'ar' ? 'الزمن' : 'Time'}</span><strong>{futureHours[forecastHourIndex] === 0 ? (language === 'ar' ? 'الآن' : 'Now') : `+${futureHours[forecastHourIndex]}h`}</strong></div>
+          <div>
+            <span>{language === 'ar' ? 'الزمن' : 'Time'}</span>
+            <strong>
+              {radarEnabled && radarTime
+                ? radarTime
+                : forecastTimeLabel}
+            </strong>
+          </div>
           <div><span>{language === 'ar' ? 'الموقع المختار' : 'Selected location'}</span><strong>{location.name}</strong></div>
         </div>
       )}
 
+      {(field !== 'none' || radarEnabled || aerosolEnabled) && (
       <div className="map-timeline glass-card">
         {radarEnabled && radarFrames.length > 0 ? (
           <>
@@ -970,7 +1033,13 @@ export default function WeatherMap({
           </>
         ) : (
           <>
-            <FiClock aria-hidden="true" />
+            <button
+              type="button"
+              onClick={() => setPlaying((value) => !value)}
+              aria-label={playing ? (language === 'ar' ? 'إيقاف الحركة' : 'Pause') : (language === 'ar' ? 'تشغيل الحركة' : 'Play')}
+            >
+              {playing ? <FiPause /> : <FiPlay />}
+            </button>
             <div className="forecast-time-options">
               {futureHours.map((hour, index) => (
                 <button
@@ -983,10 +1052,11 @@ export default function WeatherMap({
                 </button>
               ))}
             </div>
-            <small>{language === 'ar' ? 'توقع مستقبلي من النموذج المختار' : 'Forecast from the selected model'}</small>
+            <small>{language === 'ar' ? 'توقع زمني من مصدر طبقة الخريطة' : 'Timeline from the map-layer source'}</small>
           </>
         )}
       </div>
+      )}
 
       <div className="map-instruction"><FiMapPin /> {t.selectOnMap}</div>
       {error && <div className="map-error">{error}</div>}
